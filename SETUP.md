@@ -2,8 +2,9 @@
 
 This app runs on your own computer and reads your job folders directly, so
 each tech rep needs their own copy running locally. It does **not** need an
-internet connection to work (aside from the one-time download below), and it
-does **not** need any API key or account.
+internet connection to work (aside from downloading and updating it), and it
+does **not** need any API key. The only account involved is a GitHub one, for
+downloading and updating (see step 3).
 
 ## One-time setup (about 10 minutes)
 
@@ -22,19 +23,29 @@ fine.
 *(Git is what lets you get one-click updates later with `Update.bat`,
 instead of having to re-download everything by hand each time.)*
 
-### 3. Download the app
+### 3. Get access to the repository
+
+The app's code lives in a **private** GitHub repository:
+https://github.com/adamkanafani/VN-Report-App
+
+You'll need a (free) GitHub account that's been added to it — send your
+GitHub username to Adam Kanafani and accept the invite email. The first
+time you download or update, Git opens a browser window asking you to
+sign in to GitHub; sign in with that account.
+
+### 4. Download the app
 
 Open a folder where you want the app to live — e.g. your Desktop or
 Documents — right-click inside it, choose **"Open in Terminal"** (or
 "Git Bash Here" if you see that option), and run:
 
 ```
-git clone <V&N repo URL - TBD>
+git clone https://github.com/adamkanafani/VN-Report-App.git
 ```
 
 This creates a new folder called `VN-Report-App`. Open that folder.
 
-### 4. Run setup
+### 5. Run setup
 
 Double-click **`Setup - Run This First.bat`**. A black window will open and
 do some work for a few minutes (this is normal, even if it looks like
@@ -63,7 +74,8 @@ your saved progress lives outside this folder and is untouched.
 
 - **No internet needed day-to-day.** Once it's set up, the app runs
   entirely on your own computer.
-- **No API key, no account, no login.** Nothing to configure.
+- **No API key, no login to use it.** Nothing to configure — GitHub sign-in
+  is only for downloading and running `Update.bat`.
 - **Your job folders** — the app just needs to be able to browse to
   wherever your job folders already live (network drive, OneDrive, etc.),
   same as you'd browse to them in File Explorer.
