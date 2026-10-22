@@ -3,7 +3,9 @@ import path from "path";
 import sharp from "sharp";
 import type { JobScanResult, SectionScanResult } from "../ingest/scanJobFolder";
 import { COVER_FIELD_ORDER } from "../ingest/jobMetadata";
-import { applySectionOrder, type JobState, type SectionState } from "../state/jobState";
+import { applySectionOrder, sectionOrderFor, type JobState, type SectionState } from "../state/jobState";
+import { effectiveMultiSelection } from "../state/selection";
+import { excelExhibitToPdf } from "./excelExhibit";
 import { applyTableEdits, type ParsedTable } from "../ingest/parsers/types";
 
 // APG's real letterhead colors, sampled directly from a completed report (Job #20443): a short
@@ -36,6 +38,13 @@ function pageHeader(title: string, logo: string): string {
       <h1 class="page-title">${escapeHtml(title)}</h1>
     </div>
     <div class="letterhead-bar"></div>`;
+}
+
+/** A divider page ahead of a block of appended exhibits -- APG's V&N reports open every block of
+ * forms (Serial Number List, Incoming Dimensional Sheets, NDT Reports, ...) with one, since the
+ * forms themselves carry no report-level heading. */
+function dividerPage(title: string, logo: string): string {
+  return `<section class="report-page divider-page">${pageHeader("", logo)}<div class="divider-title">${escapeHtml(title)}</div></section>`;
 }
 
 /** data-col carries the raw column name onto each cell so specific columns (e.g. "APG #") can
@@ -157,25 +166,59 @@ async function photoToDataUri(absolutePath: string): Promise<string> {
   return `data:image/jpeg;base64,${buffer.toString("base64")}`;
 }
 
-async function renderPhotoSet(section: SectionScanResult, jobRoot: string, sectionState: SectionState | undefined): Promise<string> {
+/** Which photo slide a photo belongs on, from its folder -- mirrors how APG's real V&N reports
+ * title their photo pages: "Shipping Photos" (3A Incoming\Shipping), "NDT Photos (<part>)"
+ * (3A Incoming\NDT-1\<part>), "Incoming Photos (Hardware)", "Final Photos". The rank orders the
+ * groups the same way the real reports do. */
+function photoGroup(folderPath: string): { label: string; rank: number } {
+  const parts = folderPath.split("/");
+  const after = (pattern: RegExp) => {
+    const i = parts.findIndex((p) => pattern.test(p));
+    return i !== -1 ? parts[i + 1] : undefined;
+  };
+  const tidy = (s: string) => s.replace(/^incoming\s+/i, "").toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase());
+  if (/shipping/i.test(folderPath)) return { label: /3c\s*final/i.test(folderPath) ? "Final Shipping Photos" : "Shipping Photos", rank: 0 };
+  const ndtPart = after(/^ndt/i);
+  if (ndtPart) return { label: `NDT Photos (${tidy(ndtPart)})`, rank: 1 };
+  if (/ndt/i.test(folderPath)) return { label: "NDT Photos", rank: 1 };
+  if (/hardware/i.test(folderPath)) return { label: "Incoming Photos (Hardware)", rank: 2 };
+  if (/3c\s*final/i.test(folderPath)) {
+    const sub = after(/^3c\s*final/i);
+    return { label: sub && !/^final$/i.test(sub) ? `Final Photos (${tidy(sub)})` : "Final Photos", rank: 3 };
+  }
+  return { label: `Photos (${tidy(parts[parts.length - 1] || "Other")})`, rank: 4 };
+}
+
+/** One page run per photo group (see photoGroup), each under its own letterhead title, photos in
+ * the tech rep's selected order within a group. */
+async function renderPhotoPages(section: SectionScanResult, jobRoot: string, sectionState: SectionState | undefined, logo: string): Promise<string> {
   const selectedPaths = sectionState?.selectedPhotoPaths;
-  // No arbitrary cap here — the default is every matched photo, same as the real preselection
-  // logic (selectBestPhotos). This only fires if a section somehow reached render with no
-  // selection recorded at all (an old job's saved state, say); it should still show everything,
-  // not a small last-resort sample.
   const paths = selectedPaths && selectedPaths.length > 0 ? selectedPaths : section.matchedFiles.map((f) => f.relativePath);
-  if (paths.length === 0) return `<p class="missing">No photos selected.</p>`;
-  const images = await Promise.all(
-    paths.map(async (relativePath) => {
-      try {
-        const dataUri = await photoToDataUri(path.join(jobRoot, relativePath));
-        return `<figure><img src="${dataUri}" /></figure>`;
-      } catch {
-        return "";
-      }
-    })
-  );
-  return `<div class="photo-grid">${images.join("")}</div>`;
+  if (paths.length === 0) return `<section class="report-page">${pageHeader(section.title, logo)}<p class="missing">No photos selected.</p></section>`;
+
+  const groups = new Map<string, { rank: number; paths: string[] }>();
+  for (const relativePath of paths) {
+    const folder = relativePath.includes("/") ? relativePath.slice(0, relativePath.lastIndexOf("/")) : "";
+    const { label, rank } = photoGroup(folder);
+    const g = groups.get(label) ?? { rank, paths: [] };
+    g.paths.push(relativePath);
+    groups.set(label, g);
+  }
+
+  const pages: string[] = [];
+  for (const [label, group] of [...groups.entries()].sort((a, b) => a[1].rank - b[1].rank)) {
+    const images = await Promise.all(
+      group.paths.map(async (relativePath) => {
+        try {
+          return `<figure><img src="${await photoToDataUri(path.join(jobRoot, relativePath))}" /></figure>`;
+        } catch {
+          return "";
+        }
+      })
+    );
+    pages.push(`<section class="report-page">${pageHeader(label, logo)}<div class="photo-grid">${images.join("")}</div></section>`);
+  }
+  return pages.join("\n");
 }
 
 /** One piece of the final report: either a chunk of our own HTML (to be rendered to PDF via
@@ -231,7 +274,11 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
   .repairs-columns { column-count: 2; column-gap: 28px; column-fill: auto; }
   /* 16px (was 13px) per tech rep feedback -- closer to the summaries' size so everything looks
      consistent, while still fitting a typical list on one page in two columns. */
-  .repairs-columns p { font-size: 16px; line-height: 1.35; margin: 0 0 5px; break-inside: avoid; }
+  .repairs-columns p, .repairs-columns li { font-size: 16px; line-height: 1.35; margin: 0 0 5px; break-inside: avoid; }
+  /* Divider page ahead of a block of appended exhibits (see dividerPage) -- the section title large
+     and centered on an otherwise empty page, like the divider slides in APG's own V&N decks. */
+  .divider-page { min-height: 900px; }
+  .divider-title { text-align: center; font-size: 40px; font-weight: 700; color: ${apgBlue}; padding-top: 340px; }
 
   /* Letterhead used at the top of every page after the cover, matching APG's standard report
      header: small logo, centered bold title, blue-to-gray bar underneath. The logo is absolutely
@@ -318,12 +365,14 @@ ${bodyHtml}
 </html>`;
 }
 
+const REPAIR_LIST_SECTIONS = new Set(["repairRecommendations", "repairSummary"]);
+
 export async function renderReportSegments(scanIn: JobScanResult, state: JobState): Promise<RenderedReport> {
   // Applies the tech rep's own sectionOrder here too (the same helper /api/scan/route.ts uses for
   // the review sidebar) -- scanJobFolder itself only ever returns the template's own default
   // order, so without this, a dragged section would move in the sidebar but not in the actual
   // generated report.
-  const scan: JobScanResult = { ...scanIn, sections: applySectionOrder(scanIn.sections, state.sectionOrder) };
+  const scan: JobScanResult = { ...scanIn, sections: applySectionOrder(scanIn.sections, sectionOrderFor(state, scanIn.reportType)) };
   const contentFor = (id: string) => state.sections[id]?.content;
   const logo = await logoDataUri();
 
@@ -425,11 +474,19 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
       // within a narrower column instead, fitting far more steps per page while still reading
       // naturally -- and still flows onto another page on its own if a job's list is genuinely too
       // long, rather than forcing it to a fixed page count.
-      const body = id === "recommendedRepairs" ? `<div class="repairs-columns">${narrativeHtml}</div>` : narrativeHtml;
+      // Repair Recommendations / Repair Summary are a lead-in line ("APG recommends the following
+      // repairs:") over a long list of short step labels -- the lead-in stays full width, the list
+      // flows into two columns (see .repairs-columns) so a routine 20-40 step list fits a page.
+      const isRepairList = REPAIR_LIST_SECTIONS.has(id);
+      let body = narrativeHtml;
+      if (isRepairList) {
+        const [leadIn, ...rest] = (contentFor(id) ?? "").split("\n");
+        body = leadIn?.trim().endsWith(":") ? `<p>${escapeHtml(leadIn.trim())}</p><div class="repairs-columns">${renderNarrative(rest.join("\n"))}</div>` : `<div class="repairs-columns">${narrativeHtml}</div>`;
+      }
       const sectionClass = [
         "report-page",
         "narrative-section",
-        id === "recommendedRepairs" && "repairs-section",
+        isRepairList && "repairs-section",
       ]
         .filter(Boolean)
         .join(" ");
@@ -439,6 +496,7 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
 
     if (section.generation === "table-from-source") {
       if (section.printPdfFile && !state.sections[id]?.excludePrintPdf) {
+        if (section.divider) bodyParts.push(dividerPage(section.title, logo));
         // A completed, print-ready PDF of this exact form exists (see PRINT_PDF_SECTIONS) --
         // don't render our own table here at all. Flush whatever HTML has accumulated so far as
         // its own segment, drop in the real PDF as its own segment, and keep building HTML after
@@ -456,14 +514,32 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
       // per tech rep feedback. Applies to every table section; the review screen's own
       // willBeOmitted check (page.tsx) mirrors this so the sidebar says so.
       if (!editedTable || editedTable.rows.length === 0) continue;
-      const body = renderTable(editedTable, { columnBlocks: id === "serialNumberList" ? 3 : 1, notesText: state.sections[id]?.tableNotes });
+      const body = renderTable(editedTable, { notesText: state.sections[id]?.tableNotes });
       bodyParts.push(`<section class="report-page table-section">${pageHeader(section.title, logo)}${body}</section>`);
       continue;
     }
 
     if (section.generation === "llm-vision-select") {
-      const photoHtml = await renderPhotoSet(section, scan.jobRoot, state.sections[id]);
-      bodyParts.push(`<section class="report-page">${pageHeader(section.title, logo)}${photoHtml}</section>`);
+      if (section.divider) bodyParts.push(dividerPage(section.title, logo));
+      bodyParts.push(await renderPhotoPages(section, scan.jobRoot, state.sections[id], logo));
+      continue;
+    }
+
+    if (section.generation === "attach-multi") {
+      const files = effectiveMultiSelection(section, state.sections[id]);
+      if (files.length === 0) continue; // nothing ticked -- leave the whole block (divider too) out
+      if (section.divider) bodyParts.push(dividerPage(section.title, logo));
+      flush();
+      for (const file of files) {
+        if (file.ext === ".pdf") {
+          segments.push({ kind: "pdf", path: file.absolutePath });
+          continue;
+        }
+        // Spreadsheet-only exhibit -- printed through Excel (see excelExhibitToPdf).
+        const printed = await excelExhibitToPdf(file.absolutePath, scan.metadata.jobNumber);
+        if (printed) segments.push({ kind: "pdf", path: printed });
+        else skippedAttachments.push(file.relativePath);
+      }
       continue;
     }
 
@@ -478,17 +554,13 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
       const selectedPath = state.sections[id]?.selectedAttachmentPath;
       const file = (selectedPath && section.matchedFiles.find((f) => f.relativePath === selectedPath)) || section.matchedFiles[0];
       if (file && file.ext === ".pdf") {
+        if (section.divider) bodyParts.push(dividerPage(section.title, logo));
         flush();
         segments.push({ kind: "pdf", path: file.absolutePath });
       } else if (file) {
         // Matched something, but it's not a PDF we can embed (e.g. a crack map saved as a photo
         // instead of scanned to PDF) -- surface it as skipped rather than silently dropping it.
         skippedAttachments.push(file.relativePath);
-      } else if (id === "crackMap" && section.status === "missing") {
-        // Crack Map is the one attach-as-is exhibit that still prints an honest "missing" page
-        // when nothing was found at all, rather than being silently omitted -- a real gap here
-        // (unlike, say, a job with no X-Ray Inspection at all) is worth flagging explicitly.
-        bodyParts.push(`<section class="report-page">${pageHeader(section.title, logo)}<p class="missing">No crack map was found for this job.</p></section>`);
       }
       continue;
     }

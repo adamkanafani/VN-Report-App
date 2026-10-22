@@ -1,100 +1,139 @@
 import path from "path";
+import type ExcelJS from "exceljs";
 import { loadWorkbook, cellText } from "../excel";
 import type { ParsedTable } from "./types";
 
 /**
- * DS-0554 "Serial Number List". Layout (confirmed against Job 20443):
- * sheet name contains "serial number sheet"; header row 7; three parallel
- * column-blocks of [APG#, Serial#, Comment] starting at columns A, E, I,
- * each covering a third of the population. Data starts row 8.
+ * DS-0404 "Serial number recording sheet" -- the V&N serial list. Layout (confirmed against Jobs
+ * 20312, 19512 and 20505): sheet "DS-0404 serial number sheet"; H4/I4 = "Job number"; row 7 =
+ * "Frame" (GE) or "Part name" (vanes) in A with the value in C; header row 8 = Position # (A),
+ * Serial # (C), Drawing #'s (E), Old Job #'s (G), with the "Other numbers, boroscope,
+ * thermocouple, ..." label one row higher in I6; data from row 9 down to a "Recorded by" footer.
+ *
+ * Quirks handled here, all seen on real sheets:
+ * - `"` ditto marks meaning "same as the row above" (Job 20312's Drawing #'s / Old Job #'s).
+ * - Continuation rows with the position (and often the serial) left blank -- vane sheets list
+ *   several rows per position, and GE S1N's retaining ring halves spill extra drawing/other
+ *   numbers onto the rows below. A blank position carries the previous one forward; a row with no
+ *   serial either is folded into the row above instead of becoming a row of its own.
+ * - Sub-blocks introduced by a bare label row ("Retaining Ring" above its UH/LH rows on GE S1N),
+ *   which prefixes the positions under it.
  */
 
-/** APG # is usually a plain integer, but a mid-job bucket replacement gets a letter suffix
- * instead (e.g. "78R") -- sorting/range logic works off this leading numeric part while the full
- * string (with its suffix) is kept for display, so "78R" still slots in next to the bucket it
- * replaced instead of sorting to the very end (or being dropped) as NaN would. */
-function apgNumericPart(apgNum: string): number {
-  const match = apgNum.match(/^\d+/);
-  return match ? Number(match[0]) : NaN;
-}
-/** DS-0554's own header block (confirmed against Job 20443): row 3 = Customer:/Date:/Page:,
- * row 4 = APG Job #:/Insp:/Cast P/N:, row 5 = Unit/Frame:/Row/Stg:/Mach P/N:, each label in
- * column B or F or H with its value one or two columns to the right. */
-function parseFormHeader(sheet: import("exceljs").Worksheet): Array<{ label: string; value: string }> {
-  const cellPairs: Array<[number, number, number]> = [
-    [3, 2, 3], // Customer: (B3 -> C3)
-    [3, 6, 7], // Date: (F3 -> G3)
-    [3, 8, 10], // Page: (H3 -> J3)
-    [4, 2, 3], // APG Job #: (B4 -> C4)
-    [4, 6, 7], // Insp: (F4 -> G4)
-    [4, 8, 10], // Cast P/N: (H4 -> J4)
-    [5, 2, 3], // Unit/Frame: (B5 -> C5)
-    [5, 6, 7], // Row/Stg: (F5 -> G5)
-    [5, 8, 10], // Mach P/N: (H5 -> J5)
-  ];
-  const header: Array<{ label: string; value: string }> = [];
-  for (const [row, labelCol, valueCol] of cellPairs) {
-    const label = cellText(sheet.getRow(row).getCell(labelCol)).trim();
-    let value = cellText(sheet.getRow(row).getCell(valueCol)).trim();
-    if (label.toLowerCase().startsWith("date") && value) {
-      // The Date cell reads as a full JS Date string when the source cell is date-typed
-      // rather than plain text -- reduce it to the same short date format the form prints.
-      const parsed = new Date(value);
-      if (!Number.isNaN(parsed.getTime())) value = parsed.toLocaleDateString("en-US");
-    }
-    if (label) header.push({ label, value });
+const COLUMNS = ["Position #", "Serial #", "Drawing #'s", "Old Job #'s", "Other Numbers"] as const;
+const SOURCE_COLS = [1, 3, 5, 7, 9]; // A, C, E, G, I
+
+const isDitto = (v: string) => /^["“”'\s]+$/.test(v) && v.includes('"');
+
+function findHeaderRow(sheet: ExcelJS.Worksheet): number {
+  for (let r = 1; r <= Math.min(sheet.rowCount, 30); r++) {
+    const a = cellText(sheet.getRow(r).getCell(1));
+    const c = cellText(sheet.getRow(r).getCell(3));
+    if (/position|segment|vane/i.test(a) && /serial/i.test(c)) return r;
   }
-  return header;
+  return 8;
+}
+
+function findLabelledValue(sheet: ExcelJS.Worksheet, label: RegExp, maxRow: number): string {
+  for (let r = 1; r <= maxRow; r++) {
+    const row = sheet.getRow(r);
+    for (let c = 1; c <= 12; c++) {
+      if (label.test(cellText(row.getCell(c)).trim())) {
+        for (let v = c + 1; v <= c + 3; v++) {
+          const value = cellText(row.getCell(v)).trim();
+          if (value) return value;
+        }
+      }
+    }
+  }
+  return "";
+}
+
+/** Frame / part name off the sheet header ("F7EA N1", "W501D5A ROW 3 VANES") -- also used by
+ * jobMetadata.ts to fill in the cover's Turbine Model when nothing better is on file. */
+export async function readSerialListFrame(absolutePath: string): Promise<string> {
+  const workbook = await loadWorkbook(absolutePath);
+  const sheet = workbook.worksheets.find((s) => /ds-?0404|serial number/i.test(s.name)) ?? workbook.worksheets[0];
+  return sheet ? findLabelledValue(sheet, /^(frame|part name)$/i, 8) : "";
 }
 
 export async function parseSerialNumberList(absolutePath: string): Promise<ParsedTable | null> {
   const workbook = await loadWorkbook(absolutePath);
-  const sheet = workbook.worksheets.find((s) => /serial number sheet/i.test(s.name));
+  const sheet = workbook.worksheets.find((s) => /ds-?0404|serial number/i.test(s.name));
   if (!sheet) return null;
 
-  const formHeader = parseFormHeader(sheet);
-  const blockStartCols = [1, 5, 9]; // A, E, I
+  const headerRow = findHeaderRow(sheet);
   const rows: Array<Record<string, string>> = [];
+  let group = "";
+  let lastPosition = "";
+  let recordedBy = "";
+  let recordedDate = "";
 
-  for (const startCol of blockStartCols) {
-    for (let r = 8; r <= sheet.rowCount; r++) {
-      const row = sheet.getRow(r);
-      const apgNum = cellText(row.getCell(startCol));
-      // A mid-job bucket replacement gets a letter suffix instead of a new number (e.g. "78R" --
-      // confirmed against a real job's DS-0554 NOTES row: "APG-3481-21 to replace #78 Now 78R"),
-      // so this only requires a leading digit run, not a pure integer -- a strict full-match test
-      // dropped that row outright, which read as the list skipping straight from 77 to 79.
-      if (!/^\d+/.test(apgNum)) continue; // skips gaps and trailing footer/notes text
-      const serial = cellText(row.getCell(startCol + 1));
-      const comment = cellText(row.getCell(startCol + 2));
-      rows.push({ "APG #": apgNum, "Serial #": serial, Comment: comment });
+  for (let r = headerRow + 1; r <= sheet.rowCount; r++) {
+    const row = sheet.getRow(r);
+    const raw = SOURCE_COLS.map((c) => cellText(row.getCell(c)).trim());
+    if (/^recorded by/i.test(raw[0])) {
+      recordedBy = raw[1];
+      // A date-typed cell reads back as a full ISO timestamp -- print it the way the form does.
+      const parsed = /^\d{4}-\d{2}-\d{2}T/.test(raw[4]) ? new Date(raw[4]) : null;
+      recordedDate = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toLocaleDateString("en-US", { timeZone: "UTC" }) : raw[4];
+      break;
     }
+    if (raw.every((v) => v === "")) continue;
+
+    const [position, serial, ...rest] = raw;
+    // A cell merged across the row reads back as the same value in every column it spans.
+    const restFilled = [serial, ...rest].some((v) => v !== "" && v !== position);
+
+    // A bare label row ("Retaining Ring", often merged across the whole row) opening a sub-block.
+    if (position && !/^\d/.test(position) && !restFilled && position.length > 3) {
+      group = position;
+      lastPosition = "";
+      continue;
+    }
+
+    const prev = rows[rows.length - 1];
+    // No position and no serial: extra numbers spilling over from the row above.
+    if (!position && !serial && prev) {
+      COLUMNS.slice(2).forEach((col, i) => {
+        const v = rest[i];
+        if (v && !isDitto(v)) prev[col] = prev[col] ? `${prev[col]} / ${v}` : v;
+      });
+      continue;
+    }
+
+    if (position) lastPosition = position;
+    const record: Record<string, string> = { "Position #": group ? `${group} ${lastPosition}`.trim() : lastPosition, "Serial #": serial };
+    COLUMNS.slice(2).forEach((col, i) => {
+      const v = rest[i];
+      record[col] = isDitto(v) ? (prev?.[col] ?? "") : v;
+    });
+    if (isDitto(serial)) record["Serial #"] = prev?.["Serial #"] ?? "";
+    rows.push(record);
   }
 
-  rows.sort((a, b) => apgNumericPart(a["APG #"]) - apgNumericPart(b["APG #"]));
+  // Drop the unused, numbered-but-blank positions a fixed-size form leaves at the bottom.
+  while (rows.length > 0 && Object.entries(rows[rows.length - 1]).every(([k, v]) => k === "Position #" || v === "")) rows.pop();
 
-  // Each of the 3 parallel blocks is sized to a fixed capacity, not the job's real bucket
-  // count, so the tail of the last block is often unused (numbered, but blank) padding rather
-  // than real data. Drop rows past the highest APG # that actually has a serial recorded.
+  const withSerial = rows.filter((r) => r["Serial #"] !== "");
   const notes: string[] = [];
-  const realRows = rows.filter((r) => r["Serial #"] !== "");
-  const maxRealApgNum = realRows.length > 0 ? Math.max(...realRows.map((r) => apgNumericPart(r["APG #"]))) : 0;
-  const trimmedRows = rows.filter((r) => apgNumericPart(r["APG #"]) <= maxRealApgNum);
+  const blank = rows.filter((r) => r["Serial #"] === "");
+  if (blank.length > 0) notes.push(`Position(s) ${blank.map((r) => r["Position #"]).join(", ")} have no serial number recorded.`);
 
-  const stillBlank = trimmedRows.filter((r) => r["Serial #"] === "");
-  if (stillBlank.length > 0) {
-    notes.push(`APG #(s) ${stillBlank.map((r) => r["APG #"]).join(", ")} have no serial number recorded.`);
-  }
+  const formHeader = [
+    { label: "Job #:", value: findLabelledValue(sheet, /^job (number|#)/i, 6) },
+    { label: "Frame / Part:", value: findLabelledValue(sheet, /^(frame|part name)$/i, headerRow) },
+    { label: "Recorded by:", value: [recordedBy, recordedDate].filter(Boolean).join(" — ") },
+  ].filter((h) => h.value);
 
   return {
     sourceFile: path.basename(absolutePath),
     sheetName: sheet.name,
-    columns: ["APG #", "Serial #", "Comment"],
-    rows: trimmedRows,
-    sampleSize: trimmedRows.length,
-    populationSize: trimmedRows.length,
+    columns: [...COLUMNS],
+    rows,
+    sampleSize: withSerial.length,
+    populationSize: rows.length,
     notes,
     formHeader,
-    hasNotesBox: true,
   };
 }

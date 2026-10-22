@@ -5,6 +5,7 @@ import type { JobScanResult, SectionScanResult } from "@/lib/ingest/scanJobFolde
 import type { JobFile } from "@/lib/ingest/fileWalk";
 import { COVER_FIELD_ORDER } from "@/lib/ingest/jobMetadata";
 import type { SectionState } from "@/lib/state/jobState";
+import { effectiveMultiSelection } from "@/lib/state/selection";
 
 type SectionWithState = SectionScanResult & { state: SectionState };
 type ScanResponse = Omit<JobScanResult, "sections"> & { sections: SectionWithState[]; sectionOrder?: string[] };
@@ -17,12 +18,12 @@ const REPORT_TYPE_OPTIONS: Array<{ id: ReportTypeId; label: string; description:
   {
     id: "ia",
     label: "I&A Report",
-    description: "Inspect & Advise",
+    description: "Incoming Report — inspect & advise",
   },
   {
     id: "final",
     label: "Final Report",
-    description: "The completion deliverable",
+    description: "Repair Report — the completion deliverable",
   },
 ];
 
@@ -54,6 +55,7 @@ function ReportTypePicker({ onChosen }: { onChosen: (id: ReportTypeId) => void }
  * renderReportHtml.ts leaves these out automatically). Mirrors that file's own checks. */
 function omittedReason(s: SectionWithState): "removed" | "empty" | null {
   if (s.state.excludeFromReport) return "removed";
+  if (s.generation === "attach-multi" && effectiveMultiSelection(s, s.state).length === 0) return "empty";
   if (s.generation === "table-from-source") {
     const printPdfInUse = Boolean(s.printPdfFile) && !s.state.excludePrintPdf;
     if (!printPdfInUse && (!s.parsedTable || s.parsedTable.rows.length === 0)) return "empty";
@@ -319,34 +321,16 @@ function chunkRows<T>(rows: T[], numChunks: number): T[][] {
 // that tab (see scanJobFolder.ts's OPTIONAL_SUBSHEET_PARSERS handling of manualPdf) and embedded
 // outright, overriding whatever the xlsx tab itself parsed to.
 const MANUAL_ATTACHMENT_SECTIONS = new Set([
-  "chemTest",
-  "crackMap",
   "serialNumberList",
-  "scrapReport",
-  "snRecordingSheet",
-  "heightDimForm",
-  "dovetailDimension",
-  "zDropDimension",
-  "wallThickness",
+  "incomingDimensional",
+  "incomingNdt",
+  "heatTreatCharts",
   "metallurgicalReport",
-  "airflowReport",
-  // Final Report's own sections -- same reasoning as their I&A counterparts above.
-  "finalSerialNumberList",
-  "finalScrapReport",
-  "finalHeightDimForm",
-  "finalWallThickness",
-  "finalAirflowReport",
-  "preWeldHeatTreatChart",
-  "postWeldHeatTreatChart",
-  "xRayInspection",
+  "finalDimensional",
   "finalNdt",
-  "zNotchDimensions",
-  "postCoatHeatTreatChart",
-  "finalAgeHeatTreatChart",
+  "finalAirflow",
+  "finalHeatTreatCharts",
   "coatingCertification",
-  "shotPeenAlSealStripCert",
-  "damperPinCheck",
-  "finalMomentWeigh",
 ]);
 
 function ManualAttachmentUpload({
@@ -585,10 +569,9 @@ function TablePreview({
     }
   };
 
-  // Serial Number List is a long, simple 3-column list (matching the real DS-0554 form, which
-  // itself lays it out as three parallel column blocks) -- reflowing it the same way here keeps
-  // the on-screen review matching what actually prints, instead of one tall single column.
-  const columnBlocks = section.id === "serialNumberList" && table.rows.length > 3 ? 3 : 1;
+  // The bucket line's DS-0554 serial list printed as three parallel column blocks; V&N's DS-0404
+  // is a single five-column table, so this stays at one block (kept as a knob for other forms).
+  const columnBlocks = 1;
   // chunkRows slices rows into sequential ranges (chunk 0 = rows[0..perChunk-1], chunk 1 =
   // rows[perChunk..2*perChunk-1], ...), so a row's real index -- the one edits are keyed
   // against -- is derivable from its chunk and its position within it, without chunkRows itself
@@ -1031,6 +1014,140 @@ function AttachAsIs({ jobRoot, section, onRefresh }: { jobRoot: string; section:
   );
 }
 
+/** attach-multi sections -- a run of real completed exhibits (DS data-sheet prints, NDT forms, heat
+ * treat charts, coating certs) appended verbatim behind the section's divider page. Every matched
+ * PDF is listed: tick what belongs in the report, use the arrows to set print order, hover to
+ * preview, ✕ to reject a wrong match for good. Spreadsheets with no PDF print beside them are
+ * listed separately -- they exist, but can't be embedded until someone prints them to PDF. */
+function MultiAttach({ jobRoot, section, onRefresh }: { jobRoot: string; section: SectionWithState; onRefresh: () => void }) {
+  const candidates = section.matchedFiles;
+  // Keyed by section.id in SectionPanel, so this remounts fresh on a section switch or rescan.
+  const [selected, setSelected] = useState<string[]>(() => effectiveMultiSelection(section, section.state).map((f) => f.relativePath));
+  const [hovered, setHovered] = useState<string | undefined>(undefined);
+  const [excluding, setExcluding] = useState<string | undefined>(undefined);
+
+  const save = async (next: string[]) => {
+    setSelected(next);
+    await fetch("/api/section-state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jobRoot, sectionId: section.id, patch: { selectedAttachmentPaths: next } }),
+    });
+  };
+  const toggle = (relativePath: string) => save(selected.includes(relativePath) ? selected.filter((p) => p !== relativePath) : [...selected, relativePath]);
+  const move = (relativePath: string, delta: -1 | 1) => {
+    const i = selected.indexOf(relativePath);
+    const j = i + delta;
+    if (i === -1 || j < 0 || j >= selected.length) return;
+    const next = [...selected];
+    [next[i], next[j]] = [next[j], next[i]];
+    save(next);
+  };
+  const exclude = async (relativePath: string) => {
+    setExcluding(relativePath);
+    try {
+      await fetch("/api/section-state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobRoot,
+          sectionId: section.id,
+          patch: {
+            excludedMatchedPaths: [...(section.state.excludedMatchedPaths ?? []), relativePath],
+            selectedAttachmentPaths: selected.filter((p) => p !== relativePath),
+          },
+        }),
+      });
+      onRefresh();
+    } finally {
+      setExcluding(undefined);
+    }
+  };
+
+  const fileUrl = (relativePath: string) => `/api/photo-file?jobRoot=${encodeURIComponent(jobRoot)}&path=${encodeURIComponent(relativePath)}`;
+  // Ticked files first, in print order, then everything else in scan order.
+  const ordered = [
+    ...selected.map((p) => candidates.find((f) => f.relativePath === p)).filter((f): f is JobFile => Boolean(f)),
+    ...candidates.filter((f) => !selected.includes(f.relativePath)),
+  ];
+  const previewTarget = hovered ?? selected[0];
+  const upload = MANUAL_ATTACHMENT_SECTIONS.has(section.id) && (
+    <ManualAttachmentUpload
+      jobRoot={jobRoot}
+      sectionId={section.id}
+      manualAttachments={section.manualAttachments}
+      onUploaded={onRefresh}
+      hint="Missing a sheet, or it lives somewhere else? Add it here — it's ticked automatically."
+    />
+  );
+
+  return (
+    <div>
+      {candidates.length > 0 && (
+        <>
+          <p className="file-count">
+            {selected.length} of {candidates.length} file(s) will print, in this order. Hover a file to preview it.
+          </p>
+          <div className="attachment-picker">
+            <div className="attachment-candidates">
+              {ordered.map((f) => {
+                const idx = selected.indexOf(f.relativePath);
+                const isOn = idx !== -1;
+                return (
+                  <div
+                    key={f.relativePath}
+                    className={`attachment-candidate multi-candidate ${isOn ? "selected" : "unselected"}`}
+                    onMouseEnter={() => setHovered(f.relativePath)}
+                    onMouseLeave={() => setHovered(undefined)}
+                  >
+                    <label className="multi-candidate-check">
+                      <input type="checkbox" checked={isOn} onChange={() => toggle(f.relativePath)} />
+                      <span className="multi-candidate-order">{isOn ? idx + 1 : ""}</span>
+                    </label>
+                    <span className="multi-candidate-name" title={f.relativePath}>
+                      {f.baseName}
+                      {f.ext !== ".pdf" && <span className="multi-candidate-badge">Excel — printed at generate</span>}
+                      <span className="multi-candidate-folder">{f.folderPath}</span>
+                    </span>
+                    <span className="multi-candidate-moves">
+                      <button type="button" className="secondary" disabled={!isOn || idx === 0} onClick={() => move(f.relativePath, -1)} title="Print earlier">
+                        ↑
+                      </button>
+                      <button type="button" className="secondary" disabled={!isOn || idx === selected.length - 1} onClick={() => move(f.relativePath, 1)} title="Print later">
+                        ↓
+                      </button>
+                    </span>
+                    <button
+                      type="button"
+                      className="attachment-candidate-remove"
+                      disabled={excluding === f.relativePath}
+                      onClick={() => exclude(f.relativePath)}
+                      title={`Not this section's file — stop matching "${f.baseName}" here`}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            {previewTarget &&
+              (/\.pdf$/i.test(previewTarget) ? (
+                <div className="attachment-preview">
+                  <iframe key={previewTarget} src={fileUrl(previewTarget)} title={previewTarget} />
+                </div>
+              ) : (
+                <p className="section-reason">
+                  No preview for Excel files — this one is printed to PDF through Excel when the report is generated (open it in Excel to check it).
+                </p>
+              ))}
+          </div>
+        </>
+      )}
+      {upload}
+    </div>
+  );
+}
+
 function CoverEditor({
   jobRoot,
   section,
@@ -1325,6 +1442,7 @@ function SectionPanel({
       )}
       {section.generation === "llm-vision-select" && <PhotoSetEditor key={section.id} jobRoot={jobRoot} section={section} />}
       {section.generation === "attach-as-is" && <AttachAsIs key={section.id} jobRoot={jobRoot} section={section} onRefresh={onRefresh} />}
+      {section.generation === "attach-multi" && <MultiAttach key={section.id} jobRoot={jobRoot} section={section} onRefresh={onRefresh} />}
       {section.generation === "template" && (
         <CoverEditor key={section.id} jobRoot={jobRoot} section={section} metadata={metadata} patchSectionState={patchSectionState} />
       )}
@@ -1406,7 +1524,7 @@ export default function Home() {
     fetch("/api/section-order", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobRoot, order: ids }),
+      body: JSON.stringify({ jobRoot, order: ids, reportType }),
     });
   };
 
@@ -1453,11 +1571,19 @@ export default function Home() {
         const data = await res.json();
         throw new Error(data.error);
       }
+      // Exhibits that couldn't be embedded (an Excel-only sheet with no Excel install to print it,
+      // a met report saved as a photo, ...) -- the PDF still downloads, but say what's missing.
+      let skipped: string[] = [];
+      try {
+        skipped = JSON.parse(decodeURIComponent(res.headers.get("X-Skipped-Attachments") ?? "%5B%5D"));
+      } catch {
+        // header missing or malformed -- nothing to report
+      }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${scan?.metadata.jobNumber ?? "report"}-${reportType === "final" ? "Final" : "IA"}-Report.pdf`;
+      a.download = `${scan?.metadata.jobNumber ?? "report"} ${reportType === "final" ? "Repair" : "IA"} Report.pdf`;
       // Appended to the DOM (some browsers won't fire the download from a detached anchor) and the
       // object URL is kept alive for a beat after the click instead of revoked immediately -- a
       // Final Report's PDF runs several MB (all those inline exhibits/photos), and revoking
@@ -1468,6 +1594,9 @@ export default function Home() {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      if (skipped.length > 0) {
+        alert(`The report was generated, but these files couldn't be included:\n\n${skipped.join("\n")}\n\nPrint them to PDF in the same folder and generate again.`);
+      }
     } catch (e) {
       alert(e instanceof Error ? e.message : "PDF generation failed");
     } finally {
@@ -1531,7 +1660,8 @@ export default function Home() {
         </button>
         <span className="job-path">{jobRoot}</span>
         <span className="file-count">
-          Job #{scan.metadata.jobNumber} · {scan.metadata.customer} · {scan.metadata.part} · Qty {scan.metadata.quantity}
+          Job #{scan.metadata.jobNumber} · {scan.metadata.customer} · {scan.metadata.part}
+          {scan.metadata.quantity ? ` · Qty ${scan.metadata.quantity}` : ""}
         </span>
         <button disabled={loading} className="secondary" onClick={() => runScan(jobRoot)}>
           {loading ? "Scanning..." : "Rescan"}

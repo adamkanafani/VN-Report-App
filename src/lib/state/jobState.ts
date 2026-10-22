@@ -8,14 +8,6 @@ export interface SectionState {
   content?: string;
   /** For photo-select sections: the reviewer-confirmed selection. */
   selectedPhotoPaths?: string[];
-  /** For the I&A Summary narrative section only: whether to embed APG's standard 7FA
-   * modification-reference diagram (a fixed illustration, not one of the job's own photos --
-   * every 7FA I&A report includes it, showing the six standard modification callouts against a
-   * generic bucket drawing) below the summary text. Defaults to on for any job whose turbine
-   * model is a 7FA variant (see renderReportHtml.ts's renderStandardDiagram) -- set to false here
-   * to leave it out for a specific job; there's no per-job photo picker for this, since it's the
-   * same fixed reference image on every 7FA job, not something to select per job. */
-  includeStandardDiagram?: boolean;
   /** For the cover section: reviewer overrides/fill-ins for fields with no reliable auto-source
    * (Tech Rep, Customer PO, Prior Repair, Coating, ...), keyed the same as JobMetadata. */
   fields?: Record<string, string>;
@@ -53,6 +45,10 @@ export interface SectionState {
    * be legitimate, just not for THIS section); only filtered back out of matchedFiles on every
    * scan (see /api/scan) so a rejected candidate doesn't keep reappearing on rescan. */
   excludedMatchedPaths?: string[];
+  /** For attach-multi sections (dimensional sheets, NDT reports, heat treat charts, ...): the
+   * tech rep's own ticked set of exhibits, by relativePath, in the order they print. Unset until
+   * the tech rep changes anything, in which case SectionScanResult.defaultSelectedPaths applies. */
+  selectedAttachmentPaths?: string[];
   /** For table-from-source sections (Serial Number List, Height Dim Form, Dovetail Dimension,
    * Wall Thickness): manual corrections to individual cells of the freshly-parsed table -- a
    * typo'd serial number, a re-measured value, etc. Keyed "<row index>:<column name>" against
@@ -91,6 +87,10 @@ export interface JobState {
    * been reordered, or a section added to the template after this was last saved) render after
    * everything that is, in the template's own default order -- see /api/scan's orderSections. */
   sectionOrder?: string[];
+  /** Same as sectionOrder, but kept per report type (keyed by ReportTemplate.reportType) -- the
+   * Incoming and Repair reports share one job's state (so shared sections carry over), but their
+   * page orders are independent. sectionOrder above is only read as a fallback for old state. */
+  sectionOrders?: Record<string, string[]>;
 }
 
 /** Reorders `sections` per the tech rep's own sectionOrder (see JobState.sectionOrder's own
@@ -168,9 +168,14 @@ export async function updateSectionStates(jobRoot: string, patches: Record<strin
   return state;
 }
 
-export async function updateSectionOrder(jobRoot: string, order: string[]): Promise<JobState> {
+export async function updateSectionOrder(jobRoot: string, reportType: string, order: string[]): Promise<JobState> {
   const state = await loadJobState(jobRoot);
-  state.sectionOrder = order;
+  state.sectionOrders = { ...state.sectionOrders, [reportType]: order };
   await saveJobState(state);
   return state;
+}
+
+/** This report type's saved section order (see JobState.sectionOrders). */
+export function sectionOrderFor(state: JobState, reportType: string): string[] | undefined {
+  return state.sectionOrders?.[reportType] ?? state.sectionOrder;
 }

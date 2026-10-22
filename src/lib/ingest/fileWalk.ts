@@ -50,6 +50,9 @@ export async function walkJobFolder(jobRoot: string): Promise<JobFile[]> {
       }
       const lowerName = entry.name.toLowerCase();
       if (SKIP_FILE_NAMES.has(lowerName)) continue;
+      // Office's own lock files ("~$INCOMING UT LE.xlsx") left next to a workbook someone has
+      // open -- not real files, and they'd otherwise match the same name patterns as the real one.
+      if (lowerName.startsWith("~$")) continue;
       const ext = path.extname(entry.name).toLowerCase();
       if (SKIP_EXTENSIONS.has(ext)) continue;
 

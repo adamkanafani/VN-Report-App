@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { scanJobFolder } from "@/lib/ingest/scanJobFolder";
 import { resolveReportTemplate } from "@/lib/report-templates";
-import { loadJobState, saveJobState, applySectionOrder, ensureReportStartDate } from "@/lib/state/jobState";
+import { loadJobState, saveJobState, applySectionOrder, ensureReportStartDate, sectionOrderFor } from "@/lib/state/jobState";
 import { autoDraftJob } from "@/lib/draft/autoDraft";
 
 export async function POST(request: NextRequest) {
@@ -33,6 +33,16 @@ export async function POST(request: NextRequest) {
       // folder, just not the right one for this section. Filtered back out here on every scan so
       // a rejected candidate doesn't keep reappearing after a rescan, and status/statusReason are
       // recomputed the same way scanJobFolder itself would for whatever's left.
+      if (section.generation === "attach-multi" && sectionState.excludedMatchedPaths?.length) {
+        // Same rejection, for a multi-exhibit section: just drop it from the list (and from the
+        // default selection) -- status is recomputed from what's left.
+        const excluded = new Set(sectionState.excludedMatchedPaths);
+        matchedFiles = matchedFiles.filter((f) => !excluded.has(f.relativePath));
+        if (matchedFiles.length === 0 && status !== "missing") {
+          status = "missing";
+          statusReason = "Every matched file was removed — attach the right one below, or leave this section out.";
+        }
+      }
       if (section.generation === "attach-as-is" && sectionState.excludedMatchedPaths?.length) {
         const excluded = new Set(sectionState.excludedMatchedPaths);
         const filtered = matchedFiles.filter((f) => !excluded.has(f.relativePath));
@@ -71,9 +81,10 @@ export async function POST(request: NextRequest) {
     // Reorders both the sidebar and, via renderReportHtml.ts's renderReportSegments (which applies
     // this same sectionOrder to its own scan of the job folder), the generated report's own page
     // order -- see JobState.sectionOrder's own comment.
-    const orderedSections = applySectionOrder(sections, state.sectionOrder);
+    const sectionOrder = sectionOrderFor(state, scanResult.reportType);
+    const orderedSections = applySectionOrder(sections, sectionOrder);
 
-    return NextResponse.json({ ...scanResult, sections: orderedSections, sectionOrder: state.sectionOrder });
+    return NextResponse.json({ ...scanResult, sections: orderedSections, sectionOrder });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Scan failed" }, { status: 500 });
   }

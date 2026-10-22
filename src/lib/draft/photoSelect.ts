@@ -173,7 +173,9 @@ async function isUvLit(absolutePath: string): Promise<boolean> {
 export async function selectBestPhotos(candidates: JobFile[], preferredStage: "incoming" | "final" = "incoming"): Promise<PhotoSelectResult> {
   const stageGroups = groupPhotosByStage(candidates);
   const preferred = stageGroups[preferredStage]?.length ? stageGroups[preferredStage] : candidates;
-  const eligibleCandidates = preferred.filter((f) => !/shipping/i.test(f.folderPath));
+  // Unlike the bucket line, APG's V&N reports open their photo pages with "Shipping Photos" (the
+  // set as received, from 3A Incoming\Shipping) -- so shipping shots stay in the preselection.
+  const eligibleCandidates = preferred;
   const batches = chunk(eligibleCandidates, MAX_PHOTOS_PER_CALL);
 
   const batchResults = await Promise.all(batches.map(classifyBatch));

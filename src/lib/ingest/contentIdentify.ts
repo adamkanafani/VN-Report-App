@@ -13,9 +13,7 @@ export interface ContentMatch {
  * were reverse-engineered from (see ia-report.ts). Keep this in sync with which section IDs
  * scanJobFolder.ts actually calls identifyByContent for. */
 const DOCUMENT_DESCRIPTIONS: Record<string, string> = {
-  crackMap: `A turbine bucket/blade crack map: a printed or hand-drawn diagram of the part's outline (often several views -- tip, platform, root/dovetail, airfoil), hand-marked or hand-annotated with the locations of FPI (fluorescent penetrant inspection) indications -- circles, hatching, or handwritten notes on top of the part outline. May reference zone names like Tips, Airfoil, Platform, Angel Wings, Shank, or Root Serrations, or a form number such as "3097-INSP-GE-7-1SB". Often a scanned document with little or no machine-readable text.`,
-  chemTest: `A vendor Certificate of Conformance or material chemistry/composition test report for turbine bucket material -- typically a vendor letterhead (e.g. a metals testing lab or coating vendor like "Flame Spray"), with a table of chemical element percentages (Cr, Ni, Co, C, etc.) or a pass/fail conformance statement.`,
-  metallurgicalReport: `A vendor metallurgical evaluation report for a turbine component sample -- describes microstructure, hardness testing, grain structure, or similar metallurgical findings, from a materials testing lab, about a sample cut from the job's parts.`,
+  metallurgicalReport: `A metallurgical lab report on a sample cut from gas turbine nozzle segments or vanes (often titled "Gas Turbine Metallurgical Report" with a report number like "2026-138", from a lab such as VeriTech Labs) -- describes microstructure, carbide/gamma-prime condition, oxidation/corrosion depth, hardness, or grain structure, with micrographs.`,
 };
 
 // Hard caps on both file count and total bytes sent, so a fallback content scan (which only ever

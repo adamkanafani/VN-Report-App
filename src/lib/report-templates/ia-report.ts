@@ -1,18 +1,25 @@
 import type { ReportTemplate } from "./types";
+import {
+  HEAT_TREAT_RULES,
+  IA_ROUTER_RULES,
+  INCOMING_DIM_RULES,
+  INCOMING_NDT_RULES,
+  MET_REPORT_RULES,
+  PHOTO_RULES,
+  REPAIR_ROUTER_RULES,
+  SERIAL_LIST_RULES,
+} from "./vn-rules";
 
-// Section order, source rules, and generation strategy for the I&A Report.
-// Reverse-engineered from a real completed job (APG Job 20443) plus the
-// company's own "TR Summary" tracker tab (Claudability ratings carried over
-// into `automationConfidence`).
+// V&N "Incoming Report" (the I&A / Inspect & Advise deliverable). Section order matches APG's real
+// completed I&A reports -- Job 20312 (Emissions F7EA S1N) and Job 19512 (W501D5A R3V): cover +
+// component details, Incoming Engineering Summary, Repair Recommendations, then divider-led blocks
+// of appended exhibits (Serial Number List, dimensional sheets, NDT reports, photographs, heat
+// treat chart, metallurgical analysis).
 //
-// This array's order is also the sidebar's order (scanJobFolder.ts preserves it verbatim into
-// JobScanResult.sections) -- kept matching the actual generated PDF's own section order rather
-// than an independent ordering, so paging down the review sidebar lines up with paging through
-// the final report. The attach-as-is exhibits (Metallurgical Report, Chem Test, Crack Map) are
-// last in both because generateReport.ts's ATTACH_AS_IS_ORDER appends them verbatim at the very
-// end of the assembled PDF, after every other section's content.
+// This array's order is also the sidebar's default order and the generated report's default page
+// order; the tech rep can drag either to reorder (see JobState.sectionOrders).
 export const iaReportTemplate: ReportTemplate = {
-  reportType: "I&A Report",
+  reportType: "Incoming Report",
   sections: [
     {
       id: "cover",
@@ -22,273 +29,76 @@ export const iaReportTemplate: ReportTemplate = {
       automationConfidence: "high",
     },
     {
-      id: "iaSummary",
-      title: "I&A Summary",
-      sourceRules: [],
-      dependsOnSections: ["fpiVisual", "dimensionalSummary", "recommendedRepairs"],
+      // Shared with the Repair Report, which repeats it verbatim -- one section id, so the tech
+      // rep's edits here carry straight over (job state is per job folder, not per report).
+      id: "engineeringSummary",
+      title: "Incoming Engineering Summary",
+      sourceRules: IA_ROUTER_RULES,
       generation: "llm-narrative",
-      automationConfidence: "high",
-    },
-    {
-      id: "fpiVisual",
-      title: "FPI & Visual Inspection Summary",
-      sourceRules: [
-        {
-          kind: "filenamePattern",
-          pattern: /(^|[^a-z])ia[_ -]?router/i,
-          excludePattern: /^copy of/i,
-          requiredExtensions: [".xlsm", ".xlsx"],
-        },
-      ],
-      generation: "llm-narrative",
-      automationConfidence: "high",
-    },
-    {
-      id: "dimensionalSummary",
-      title: "Dimensional Inspection Summary",
-      sourceRules: [],
-      dependsOnSections: ["heightDimForm", "dovetailDimension", "wallThickness"],
-      generation: "llm-narrative",
-      automationConfidence: "high",
+      automationConfidence: "medium",
       alwaysReview: true,
     },
     {
-      id: "recommendedRepairs",
-      title: "Recommended Repairs",
-      sourceRules: [
-        {
-          kind: "filenamePattern",
-          pattern: /repair[_ -]?router/i,
-          excludePattern: /^copy of/i,
-          requiredExtensions: [".xlsm", ".xlsx"],
-        },
-        {
-          // Some customers' jobs have no repair-router file at all -- a "Repair CDS" reference
-          // workbook stands in instead (see repairCds.ts), confirmed against Job 20436 ("Repair
-          // CDS.xlsm") and Job 20668, a different customer unit/contract ("CDS Repair.xlsm" --
-          // word order isn't consistent).
-          kind: "filenamePattern",
-          pattern: /repair\s*cds|cds\s*repair/i,
-          requiredExtensions: [".xlsm", ".xlsx"],
-        },
-      ],
+      id: "repairRecommendations",
+      title: "Repair Recommendations",
+      sourceRules: REPAIR_ROUTER_RULES,
       generation: "llm-narrative",
       automationConfidence: "high",
     },
     {
       id: "serialNumberList",
       title: "Serial Number List",
-      sourceRules: [
-        {
-          kind: "filenamePattern",
-          pattern: /ds-?0554.*incoming/i,
-          requiredExtensions: [".xlsx"],
-        },
-        {
-          kind: "filenamePattern",
-          pattern: /ds-?0554/i,
-          excludePattern: /in.?process|final/i,
-          requiredExtensions: [".xlsx"],
-        },
-      ],
+      sourceRules: SERIAL_LIST_RULES,
       generation: "table-from-source",
       automationConfidence: "high",
+      divider: true,
     },
     {
-      id: "scrapReport",
-      title: "Scrap Report",
-      // Same workbook as Serial Number List, not a separate file -- this reads its "blade bucket
-      // scrap" tab instead of the main serial number sheet.
-      sourceRules: [
-        {
-          kind: "filenamePattern",
-          pattern: /ds-?0554.*incoming/i,
-          requiredExtensions: [".xlsx"],
-        },
-        {
-          kind: "filenamePattern",
-          pattern: /ds-?0554/i,
-          excludePattern: /in.?process|final/i,
-          requiredExtensions: [".xlsx"],
-        },
-      ],
-      generation: "table-from-source",
+      id: "incomingDimensional",
+      title: "Incoming Dimensional Sheets",
+      sourceRules: INCOMING_DIM_RULES,
+      generation: "attach-multi",
       automationConfidence: "high",
+      divider: true,
     },
     {
-      id: "snRecordingSheet",
-      title: "Serial Number Recording Sheet",
-      // Same workbook as Serial Number List again -- its "DS-0404 SN Recording Sheet" tab.
-      sourceRules: [
-        {
-          kind: "filenamePattern",
-          pattern: /ds-?0554.*incoming/i,
-          requiredExtensions: [".xlsx"],
-        },
-        {
-          kind: "filenamePattern",
-          pattern: /ds-?0554/i,
-          excludePattern: /in.?process|final/i,
-          requiredExtensions: [".xlsx"],
-        },
-      ],
-      generation: "table-from-source",
-      automationConfidence: "high",
-    },
-    {
-      id: "heightDimForm",
-      title: "Height Dim Form",
-      sourceRules: [
-        {
-          // "heights...incoming" (1st stage) or "height form...incoming" (2nd/3rd stage,
-          // confirmed against Job 20436's "...height form tall buckets Incoming.xlsx" -- no "s"
-          // on "height" at all, so the 1st-stage-only pattern this used to be missed it outright).
-          kind: "filenamePattern",
-          pattern: /heights?.*incoming/i,
-          requiredExtensions: [".xlsx"],
-        },
-        {
-          kind: "filenamePattern",
-          pattern: /ds-?0004/i,
-          excludePattern: /in.?process|final/i,
-          requiredExtensions: [".xlsx"],
-        },
-      ],
-      generation: "table-from-source",
-      automationConfidence: "high",
-    },
-    {
-      id: "dovetailDimension",
-      title: "Dovetail Dimension Inspection",
-      sourceRules: [
-        {
-          kind: "filenamePattern",
-          pattern: /dovetail.*incoming/i,
-          requiredExtensions: [".xlsx"],
-        },
-        {
-          // Form number varies by bucket stage -- DS-1017 for 1st stage, DS-0460 ("Stage 2 and
-          // 3 Bucket Dovetail Inspection Data Sheet") for 2nd/3rd -- confirmed both use the same
-          // internal layout (see dovetailDimension.ts), so one section covers all of them.
-          kind: "filenamePattern",
-          pattern: /ds-?1017|ds-?0460/i,
-          excludePattern: /in.?process|final/i,
-          requiredExtensions: [".xlsx"],
-        },
-      ],
-      generation: "table-from-source",
-      automationConfidence: "high",
-    },
-    {
-      id: "zDropDimension",
-      title: "Z-Drop Dimensions",
-      sourceRules: [
-        {
-          // "Z drop"/"Z notch" (2nd stage) or just "Z dimensions" (3rd stage, confirmed against
-          // Job 20436 -- same form, filename just doesn't say drop/notch at all).
-          kind: "filenamePattern",
-          pattern: /z[\s_-]?(drop|notch|dimensions?).*incoming/i,
-          requiredExtensions: [".xlsx"],
-        },
-        {
-          kind: "filenamePattern",
-          pattern: /ds-?0459/i,
-          excludePattern: /in.?process|final/i,
-          requiredExtensions: [".xlsx"],
-        },
-      ],
-      generation: "table-from-source",
-      automationConfidence: "high",
-    },
-    {
-      id: "wallThickness",
-      title: "Wall Thickness",
-      sourceRules: [
-        {
-          kind: "filenamePattern",
-          pattern: /incoming.*ut|ut.*incoming|ds-?0002/i,
-          preferFolder: /ndt/i,
-          requiredExtensions: [".xlsx"],
-        },
-      ],
-      generation: "table-from-source",
-      automationConfidence: "high",
-    },
-    {
-      id: "airflowReport",
-      title: "Airflow Report",
-      sourceRules: [
-        {
-          kind: "filenamePattern",
-          pattern: /airflow/i,
-          requiredExtensions: [".xlsx"],
-        },
-      ],
-      generation: "table-from-source",
-      automationConfidence: "high",
+      id: "incomingNdt",
+      title: "Incoming NDT Reports",
+      sourceRules: INCOMING_NDT_RULES,
+      generation: "attach-multi",
+      automationConfidence: "medium",
+      // Vendor scanner output ("SFallbrook 26042915160.pdf") also lands in 7D -- listed, but
+      // left unticked until someone confirms what it is.
+      preselectPattern: /incoming|crack|ut\b|red\s*dye|visual|fpi|vpi/i,
+      divider: true,
     },
     {
       id: "photoSet",
-      title: "Photo Set",
-      sourceRules: [
-        {
-          kind: "folderPattern",
-          pattern: /pictures/i,
-          fileExtensions: [".jpg", ".jpeg", ".png"],
-        },
-        {
-          // Fallback for jobs that paste incoming photos directly into a template document
-          // instead of keeping loose files in a Pictures folder — only used when the folder
-          // rule above finds nothing; see scanFileBackedSection's llm-vision-select branch.
-          kind: "filenamePattern",
-          pattern: /photo.*template/i,
-          requiredExtensions: [".pdf"],
-        },
-      ],
+      title: "Incoming Photographs",
+      sourceRules: PHOTO_RULES,
       generation: "llm-vision-select",
       automationConfidence: "medium",
       alwaysReview: true,
+      divider: true,
+    },
+    {
+      id: "heatTreatCharts",
+      title: "Heat Treat Chart",
+      sourceRules: HEAT_TREAT_RULES,
+      generation: "attach-multi",
+      automationConfidence: "medium",
+      // At I&A time only the pre-weld cycle has been run; later charts in 7C belong to the
+      // Repair Report.
+      preselectPattern: /pre[\s-]?weld/i,
+      divider: true,
     },
     {
       id: "metallurgicalReport",
-      title: "Metallurgical Report",
-      sourceRules: [
-        {
-          kind: "filenamePattern",
-          pattern: /met.*report/i,
-          requiredExtensions: [".pdf"],
-        },
-      ],
+      title: "Metallurgical Sample Analysis",
+      sourceRules: MET_REPORT_RULES,
       generation: "attach-as-is",
       automationConfidence: "high",
-    },
-    {
-      id: "chemTest",
-      title: "Chem Test",
-      sourceRules: [
-        {
-          kind: "filenamePattern",
-          pattern: /chem.*(strip|test)/i,
-          requiredExtensions: [".pdf"],
-          preferFolder: /reports/i,
-        },
-      ],
-      generation: "attach-as-is",
-      automationConfidence: "high",
-    },
-    {
-      id: "crackMap",
-      title: "Crack Map",
-      sourceRules: [
-        {
-          kind: "filenamePattern",
-          pattern: /crack[_ -]?map/i,
-          requiredExtensions: [".pdf", ".jpg", ".jpeg", ".png"],
-        },
-      ],
-      generation: "attach-as-is",
-      automationConfidence: "high",
-      alwaysReview: true,
+      divider: true,
     },
   ],
 };

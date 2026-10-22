@@ -19,6 +19,8 @@ function matchFilenameRule(
     const exts = rule.requiredExtensions.map((e) => e.toLowerCase());
     candidates = candidates.filter((f) => exts.includes(f.ext));
   }
+  if (rule.folder) candidates = candidates.filter((f) => rule.folder!.test(f.folderPath));
+  if (rule.excludeFolder) candidates = candidates.filter((f) => !rule.excludeFolder!.test(f.folderPath));
   if (rule.preferFolder) {
     const preferred = candidates.filter((f) => rule.preferFolder!.test(f.folderPath));
     if (preferred.length > 0) candidates = preferred.concat(candidates.filter((f) => !preferred.includes(f)));

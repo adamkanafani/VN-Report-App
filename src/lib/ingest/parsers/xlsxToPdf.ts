@@ -108,7 +108,8 @@ export async function renderXlsxSheetToPdf(xlsxPath: string, sheetNamePattern: R
     );
     await fs.access(outputPath);
     return outputPath;
-  } catch {
+  } catch (err) {
+    console.error(`Excel render failed for "${xlsxPath}":`, err);
     return null; // no Excel installed, it hung/errored, etc. -- caller falls back to our own table
   } finally {
     await fs.rm(scriptPath, { force: true }).catch(() => {});
