@@ -1,0 +1,1573 @@
+:root {
+  --background: #eaf3fc;
+  --foreground: #171717;
+}
+
+html {
+  height: 100%;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+body {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  color: var(--foreground);
+  background: var(--background);
+  /* Geist Sans is already loaded via layout.tsx (--font-geist-sans) for this exact purpose --
+     it was just never actually wired into the stylesheet, leaving the whole app on the system
+     Arial/Helvetica fallback instead of the cleaner typeface. */
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  position: relative;
+}
+
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* --- Tech Rep Report Builder --- */
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.app-header {
+  padding: 12px 18px;
+  border-bottom: 1px solid #0b3d91;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  /* Same white-to-blue gradient as the folder-selection (home) screen's backdrop -- see
+     .folder-picker::after -- so the top and bottom bars match it. */
+  background: linear-gradient(135deg, #eaf3fc 0%, #cfe4fb 45%, #9dc2ec 75%, #6fa3e0 100%);
+  position: relative;
+  z-index: 1;
+  box-shadow: 0 4px 14px rgba(11, 61, 145, 0.12);
+}
+
+/* The footer reuses the .app-header class but sits below .app-body, outside the
+   sidebar's own box — so the sidebar/main-panel divider line stops short of the
+   page bottom unless the footer draws its own continuation of that same line. */
+footer.app-header {
+  position: relative;
+  box-shadow: 0 -4px 14px rgba(11, 61, 145, 0.1);
+}
+
+/* The amber warning text was tuned for a near-white bar; darker so it stays readable on the
+   blue end of the gradient. */
+footer.app-header .confidence-note {
+  color: #5c4000;
+  font-weight: 600;
+}
+
+footer.app-header::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 319px;
+  width: 1px;
+  background: #d5e1f2;
+}
+
+.app-header .job-path {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 12px;
+  color: #1a2f55;
+  flex: 1;
+  min-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.sidebar {
+  width: 320px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  /* Frosted glass over the page's light blue -- rows themselves stay transparent (no
+     background of their own) so this shows through them uniformly, keeping "the tabs are
+     light blue" true while still reading as its own distinct panel from the plain body. */
+  background: rgba(255, 255, 255, 0.3);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  /* No border-right here -- overflow-y:auto on .sidebar-scroll forces its overflow-x
+     to compute as "auto" too (CSS won't mix visible with non-visible per axis), which
+     clips 1px no matter what, so a border/overlay on this ancestor can never actually
+     reach the true edge for one row while the rest scrolls. Instead each row draws its
+     OWN right border below (see .section-item, .sidebar-logo-spacer) -- entirely inside
+     the scroller's own width, so nothing needs to spill past a clipped boundary, and
+     the active row can simply omit its own segment to "merge" into the white panel. */
+}
+
+/* The actual scroller. Kept separate from .sidebar itself so its OS scrollbar doesn't
+   eat into the 320px width and leave a gap between the active tab and the sidebar's
+   real right edge -- that gap was breaking the "selected tab merges into the white
+   main panel" effect. Scrollbar is hidden (scroll still works via wheel/trackpad/keys)
+   so the tab can use the full width right up to the divider line. */
+.sidebar-scroll {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  scrollbar-width: none; /* Firefox */
+}
+
+.sidebar-scroll::-webkit-scrollbar {
+  display: none; /* Chrome, Edge, Safari */
+}
+
+/* Fills whatever space is left below the last section tab and centers the
+   logo inside it, instead of guessing a fixed offset from the sidebar's
+   bottom edge — so it's always centered in that empty box regardless of
+   how many section tabs are above it. */
+.sidebar-logo-spacer {
+  flex: 1 1 auto;
+  min-height: 70px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 6px 6px 10px;
+  pointer-events: none;
+  border-right: 1px solid #d5e1f2;
+}
+
+.sidebar-logo-img {
+  max-width: 95%;
+  max-height: 95%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  display: block;
+}
+
+/* No longer itself a <button> -- wraps the drag handle (see .section-drag-handle) and the
+   "select" button (click to open this section) side by side, since a button can't nest inside
+   another button. Everything this rule (and .section-item:hover/.active below) used to draw on
+   the button itself now draws on this wrapper instead; .section-item-select just carries the text.
+   Also this row's drop TARGET for drag-and-drop reordering -- see the handle's own comment for
+   why dragging is split between a dedicated handle (the drag source) and this row (the target). */
+.section-item {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  padding: 0;
+  border: none;
+  /* A soft blue-grey hairline instead of the full-strength brand navy -- a heavy dark line
+     between every row read more like spreadsheet gridlines than a polished list. */
+  border-bottom: 1px solid #d5e1f2;
+  border-right: 1px solid #d5e1f2;
+  border-left: 3px solid transparent;
+  border-radius: 0;
+  /* Light blue at rest so unselected tabs contrast with the white selected tab. */
+  background: #cfe4fb;
+  color: #1a1a1a;
+  transition: background-color 0.15s ease, border-left-color 0.15s ease;
+}
+
+.section-item.dragging {
+  opacity: 0.4;
+}
+
+.section-item.drag-over {
+  border-top: 2px solid #0b3d91;
+}
+
+/* Dim at rest (still visible enough to notice the feature exists) and full contrast on hover or
+   on the active row, same "quiet until it matters" treatment as .manual-attachment-chip-remove.
+   ⠿ (braille "all dots") reads as a generic grip glyph without needing an icon font/SVG. */
+.section-drag-handle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0 6px 0 12px;
+  font-size: 13px;
+  color: currentColor;
+  opacity: 0.35;
+  cursor: grab;
+  user-select: none;
+  transition: opacity 0.15s ease;
+}
+
+.section-item:hover .section-drag-handle,
+.section-item.active .section-drag-handle {
+  opacity: 0.8;
+}
+
+.section-item-select {
+  flex: 1;
+  min-width: 0;
+  display: block;
+  text-align: left;
+  padding: 13px 4px 13px 13px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+/* color here is what .section-drag-handle picks up via currentColor (it declares no color of its
+   own) -- without it the handle stayed dark and hard to see against the navy hover fill, even
+   though the title and confidence tag below already turned white. Applies to the active tab too
+   now (see .section-item.active:hover below, which matches this navy fill instead of staying
+   white the way the tab looks at rest). */
+.section-item:hover {
+  background: #082c6b;
+  border-left-color: #0b3d91;
+  color: #ffffff;
+}
+
+/* Title/subtitle are normally near-black/grey, which is hard to read once the navy
+   hover tint darkens the row -- flip them to white on hover. Both already have their own
+   explicit color (stronger than inheriting the row's color above), hence needing their own
+   rule here too. */
+.section-item:hover .title-row span:first-child,
+.section-item:hover .confidence-tag {
+  color: #ffffff;
+}
+
+.section-item.active {
+  background: #ffffff;
+  font-weight: 600;
+  /* Drop this row's own right border (see .section-item) so the white tab reads as
+     physically connected to the white main panel next to it, like a real notebook-tab,
+     instead of interrupted by the divider line. */
+  border-right: none;
+}
+
+/* The active tab's own background above would otherwise win over the plain :hover rule (equal
+   specificity, .active declared later) -- this compound selector outranks both, so hovering the
+   currently-selected tab gets the exact same navy-fill-plus-white-text feedback as any other row,
+   instead of silently staying white with unreadable-on-hover black text. */
+.section-item.active:hover {
+  background: #082c6b;
+  border-left-color: #0b3d91;
+}
+
+.section-item-select:hover {
+  box-shadow: none;
+}
+
+.section-item .title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-item .title-row span:first-child {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.status-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.status-badge.ready {
+  background: #dff5e1;
+  color: #1a7431;
+}
+
+.status-badge.needs-attention {
+  background: #fff3cd;
+  color: #8a6300;
+}
+
+.status-badge.missing {
+  background: #fbe0e0;
+  color: #a4141a;
+}
+
+.status-badge.omitted {
+  background: #e4e8ef;
+  color: #5b6779;
+}
+
+/* A section that won't be in the generated report (removed, or an empty table section): dimmed
+   so the sidebar reads at a glance as "this isn't going in." */
+.section-item.omitted .title-row span:first-child {
+  opacity: 0.55;
+}
+
+.section-item.omitted .title-row span:first-child,
+.section-item.omitted .confidence-tag {
+  text-decoration: line-through;
+}
+
+/* The ✕ (leave out of report) / ↺ (add back) at the right edge of a sidebar tab. */
+.section-remove-btn {
+  flex: none;
+  align-self: center;
+  margin: 0 8px 0 2px;
+  padding: 2px 7px;
+  border: none;
+  background: none;
+  box-shadow: none;
+  color: currentColor;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.45;
+  cursor: pointer;
+}
+
+.section-item:hover .section-remove-btn {
+  opacity: 0.9;
+}
+
+.section-item .section-remove-btn:hover {
+  opacity: 1;
+  background: rgba(11, 61, 145, 0.14);
+  box-shadow: none;
+}
+
+.confidence-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  color: #33507a;
+  background: #eaf2fc;
+  border-radius: 999px;
+  padding: 1px 8px;
+  margin-top: 5px;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.section-item:hover:not(.active) .confidence-tag {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.main-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 28px;
+  background: #ffffff;
+}
+
+.section-reason {
+  font-size: 13px;
+  color: #33507a;
+  background: #eaf2fc;
+  border: 1px solid #cfe0f5;
+  border-left: 3px solid #0b3d91;
+  padding: 8px 14px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+}
+
+.confidence-note {
+  font-size: 12px;
+  color: #8a6300;
+  margin-bottom: 16px;
+}
+
+/* Small "x" to exclude the auto-detected completed-form PDF from a table section, leaving this
+   app's own re-rendered table for the generated report instead -- sits right at the front of the
+   .section-reason box's own text, not off in a corner, since it's acting directly on the claim
+   that box is making ("the completed form will be embedded"). */
+.exclude-print-pdf-btn {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  padding: 0;
+  border: 1px solid #0b3d91;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #0b3d91;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.exclude-print-pdf-btn:hover {
+  background: #0b3d91;
+  color: #ffffff;
+}
+
+.link-button {
+  border: none;
+  background: none;
+  padding: 0;
+  color: #0b3d91;
+  font-size: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.link-button:hover {
+  color: #082a68;
+}
+
+/* Shared look for every text input/textarea in the app (Title/Cover fields, the
+   "Revise with instruction" box, the draft textarea) -- border/radius/hover/focus live
+   here once instead of duplicated per context, so hovering or focusing any of them
+   gives the same navy highlight instead of staying flat browser-default grey. */
+input[type="text"],
+textarea {
+  border: 1px solid #d5e1f2;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-family: inherit;
+  font-size: 14px;
+  color: #1a1a1a;
+  background: #fbfdff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+input[type="text"]::placeholder,
+textarea::placeholder {
+  color: #9aabc4;
+}
+
+input[type="text"]:hover,
+textarea:hover {
+  border-color: #8fb0dd;
+}
+
+input[type="text"]:focus,
+textarea:focus {
+  outline: none;
+  border-color: #0b3d91;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(11, 61, 145, 0.15);
+}
+
+textarea.draft-textarea {
+  width: 100%;
+  min-height: 260px;
+  font-size: 14px;
+  padding: 10px;
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.toolbar input[type="text"] {
+  flex: 1;
+  min-width: 220px;
+  padding: 8px 10px;
+}
+
+button {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 9px 16px;
+  border-radius: 7px;
+  border: 1px solid #0b3d91;
+  background: #0b3d91;
+  color: white;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  box-shadow: 0 1px 3px rgba(11, 61, 145, 0.25);
+  transition: background-color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+}
+
+/* :not(.section-item) matters here: sidebar tabs are literal <button>s, and
+   button:hover:not(:disabled) would otherwise outrank .section-item:hover (an extra
+   :not() pseudo-class bumps its specificity above a plain class + :hover), silently
+   overriding the tab's own hover background with this dark navy fill. */
+button:hover:not(:disabled):not(.section-item) {
+  background: #082c6b;
+  box-shadow: 0 2px 6px rgba(11, 61, 145, 0.35);
+}
+
+/* A brief press-down on click -- tactile feedback that a flat hover-only button lacks. */
+button:active:not(:disabled):not(.section-item) {
+  transform: translateY(1px);
+  box-shadow: 0 1px 2px rgba(11, 61, 145, 0.3);
+}
+
+button:focus-visible {
+  outline: 2px solid #4f8cf0;
+  outline-offset: 2px;
+}
+
+button.secondary {
+  background: white;
+  color: #0b3d91;
+  box-shadow: none;
+}
+
+button.secondary:hover:not(:disabled) {
+  background: #eaf1fb;
+}
+
+button.secondary:active:not(:disabled) {
+  background: #d9e8fb;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+button.generate-report {
+  background: #1a7431;
+  border-color: #1a7431;
+  font-size: 15px;
+  padding: 12px 24px;
+  box-shadow: 0 2px 5px rgba(26, 116, 49, 0.35);
+}
+
+button.generate-report:hover:not(:disabled) {
+  background: #145c27;
+  box-shadow: 0 3px 8px rgba(26, 116, 49, 0.45);
+}
+
+button.generate-report:active:not(:disabled) {
+  background: #0e4a1e;
+  box-shadow: 0 1px 3px rgba(26, 116, 49, 0.4);
+}
+
+/* Full-screen overlay shown while assembling the final PDF -- covers the review screen without
+   replacing it, since a rescan or scan-in-progress screen swap would lose the tech rep's place. */
+.generating-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(11, 30, 66, 0.32);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.generating-overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  border-radius: 16px;
+  padding: 36px 48px;
+  box-shadow: 0 24px 60px rgba(3, 12, 30, 0.3);
+}
+
+/* A little larger here than the 50px default -- this card is the whole point of focus on
+   screen, not a small icon next to a wordmark. */
+.generating-overlay-card .app-logo-mark,
+.generating-overlay-card .app-logo-mark-img {
+  height: 72px;
+}
+
+.generating-overlay-text {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #0b3d91;
+}
+
+.generating-overlay-hint {
+  margin: 0;
+  font-size: 13px;
+  color: #33507a;
+  text-align: center;
+  max-width: 32ch;
+}
+
+.preview-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+  margin-top: 10px;
+  background: #ffffff;
+  /* Sharp corners on purpose, not rounded like the cover table/folder list -- th is
+     position:sticky for tables tall enough to scroll (Wall Thickness runs 270+ rows), and an
+     overflow:hidden wrapper needed to clip rounded corners would break that stickiness. */
+  border: 1px solid #d5e1f2;
+  box-shadow: 0 2px 8px rgba(11, 61, 145, 0.06);
+}
+
+.preview-table th,
+.preview-table td {
+  border: 1px solid #d5e1f2;
+  padding: 6px 10px;
+  background: #ffffff;
+}
+
+.preview-table th {
+  background: #0b3d91;
+  color: white;
+  position: sticky;
+  top: 0;
+}
+
+/* Faint zebra striping for readability across long tables (Wall Thickness runs 270+ rows). */
+.preview-table tbody tr:nth-child(even) td {
+  background: #f4f8fd;
+}
+
+.preview-table td.fail {
+  color: #a4141a;
+  font-weight: 700;
+}
+
+/* Editable table cells (Serial Number List, Height Dim Form, Dovetail Dimension, Wall Thickness)
+   -- flush and borderless so a cell full of inputs still reads as a plain data table, not a form,
+   until you actually click into one. Explicit font/color inheritance because inputs don't pick
+   those up from an ancestor by default (unlike a plain <td> text node), which matters here since
+   .fail's red/bold needs to reach text sitting inside the input. */
+.preview-table td input.table-cell-input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  padding: 0;
+  text-align: inherit;
+}
+
+.preview-table td input.table-cell-input:focus {
+  outline: 2px solid #0b3d91;
+  outline-offset: 1px;
+  border-radius: 3px;
+  background: #fbfdff;
+}
+
+/* The real form's "NOTES:" box, now an actual input instead of a decorative blank rectangle. */
+.form-notes-input {
+  display: block;
+  width: 100%;
+  min-height: 54px;
+  margin-top: 4px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  color: #1a1a1a;
+  resize: vertical;
+  padding: 0;
+}
+
+.form-notes-input:focus {
+  outline: none;
+}
+
+.preview-table th[data-col="Serial #"],
+.preview-table td[data-col="Serial #"],
+.preview-table th[data-col="APG #"],
+.preview-table td[data-col="APG #"] {
+  text-align: center;
+}
+
+/* Title/Cover's label+value form -- a two-column table, not a data grid, so it gets its own
+   look: no busy per-cell gridlines (just a soft row divider), rounded container, and the input
+   sitting flush/borderless inside its own cell instead of a boxed input inside a bordered cell. */
+.cover-table-wrap {
+  display: inline-block;
+  border: 1px solid #d5e1f2;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(11, 61, 145, 0.08);
+}
+
+.cover-table {
+  margin-top: 0;
+}
+
+.cover-table th,
+.cover-table td {
+  border: none;
+  border-bottom: 1px solid #d5e1f2;
+  padding: 10px 18px;
+}
+
+.cover-table tr:last-child th,
+.cover-table tr:last-child td {
+  border-bottom: none;
+}
+
+.cover-table th {
+  position: static;
+  font-weight: 700;
+}
+
+/* Its own narrow leading column rather than living inside the label cell -- the label cell is
+   already tight for some of the longer standard field names (e.g. "Mach Part Number"), and
+   cramming a drag handle in there too would force it to wrap. */
+.cover-table .field-reorder-cell {
+  width: 30px;
+  padding: 10px 2px 10px 10px;
+  vertical-align: middle;
+}
+
+/* Same grip glyph and hover/opacity treatment as the sidebar's own .section-drag-handle --
+   dimmed at rest, full contrast on hover, so a page of mostly-static field rows doesn't read as
+   a page of drag handles at first glance. */
+.field-drag-handle {
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  color: #6a6a6a;
+  opacity: 0.4;
+  cursor: grab;
+  user-select: none;
+  transition: opacity 0.15s ease;
+}
+
+.cover-table tr:hover .field-drag-handle {
+  opacity: 1;
+}
+
+.cover-table tr.dragging-row {
+  opacity: 0.4;
+}
+
+.cover-table tr.drag-over-row td,
+.cover-table tr.drag-over-row th {
+  box-shadow: inset 0 2px 0 0 #0b3d91;
+}
+
+.cover-table input[type="text"] {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 2px 0;
+}
+
+.cover-table input[type="text"]:hover {
+  border: none;
+}
+
+/* The fixed field labels (th's own plain text, e.g. "Boxes") inherit the th's white text color
+   for free -- but a custom field's label is an <input> instead of plain text (see CoverEditor),
+   and inputs don't inherit color from an ancestor the way text does, so it needs its own explicit
+   white here, plus a lighter placeholder for the still-empty "Field name" prompt. */
+.cover-table th input[type="text"]::placeholder {
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.cover-table input[type="text"]:focus {
+  background: #eaf2fc;
+  border-radius: 6px;
+  box-shadow: none;
+  padding: 2px 8px;
+}
+
+/* Overrides the light-blue focus background above specifically for a custom field's label input
+   -- that one sits on the navy th, where the white text (see the rule above) would go unreadable
+   against the light background the general focus style gives every other cover-table input. */
+.cover-table th input[type="text"]:focus {
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+  margin: 0 -8px;
+}
+
+/* Side-by-side mini-tables for long, simple lists (see TablePreview's columnBlocks) --
+   narrower per-block table so a long list fits several columns across instead of one
+   tall single column, matching how the same table reflows in the generated PDF. */
+.table-columns {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.table-columns .table-block {
+  width: auto;
+  flex: 1 1 0;
+  font-size: 11px;
+}
+
+.table-columns .table-block th,
+.table-columns .table-block td {
+  padding: 3px 6px;
+}
+
+/* Source form's own Customer/Date/Page/etc. header block, matching the same 3-per-row grid the
+   original form (e.g. DS-0554) prints above its table. */
+.form-header-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid #000;
+  margin-top: 10px;
+  background: #ffffff;
+}
+
+.form-header-cell {
+  border: 1px solid #000;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.form-header-label {
+  font-weight: 700;
+  margin-right: 4px;
+}
+
+/* The real form's blank "NOTES:" box under the table. */
+.form-notes-box {
+  border: 1px solid #000;
+  min-height: 70px;
+  margin-top: 10px;
+  padding: 6px 8px;
+  background: #ffffff;
+}
+
+.form-notes-label {
+  font-weight: 700;
+  text-decoration: underline;
+  font-size: 12px;
+}
+
+.photo-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.photo-tile {
+  position: relative;
+  width: 180px;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(11, 61, 145, 0.12);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.photo-tile:hover:not(.selected) {
+  border-color: #0b3d91;
+  box-shadow: 0 8px 20px rgba(11, 61, 145, 0.25);
+  transform: translateY(-2px);
+}
+
+.photo-tile.selected {
+  border-color: #1a7431;
+  box-shadow: 0 4px 16px rgba(26, 116, 49, 0.3);
+}
+
+/* Checkmark badge instead of relying on the border color alone to signal "selected". */
+.photo-tile.selected::after {
+  content: "✓";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: #1a7431;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.photo-tile img {
+  width: 100%;
+  height: 130px;
+  object-fit: cover;
+  display: block;
+}
+
+.photo-tile .caption {
+  font-size: 10px;
+  color: #33507a;
+  background: #f4f8fd;
+  padding: 5px 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* "All" vs "Selected" view toggle above the photo grid. */
+.photo-filter-tabs {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.photo-filter-tab {
+  background: #ffffff;
+  color: #33507a;
+  border: 2px solid #d5e1f2;
+  border-radius: 999px;
+  padding: 6px 16px;
+  font-weight: 600;
+  font-size: 12px;
+  box-shadow: none;
+}
+
+.photo-filter-tab:hover:not(.active) {
+  border-color: #0b3d91;
+  color: #0b3d91;
+}
+
+.photo-filter-tab.active {
+  border-color: #0b3d91;
+  background: #0b3d91;
+  color: #ffffff;
+}
+
+/* Prev/Next + "show all" controls for photo sets past PHOTOS_PER_PAGE. */
+.photo-pagination {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.photo-page-btn {
+  background: #ffffff;
+  color: #0b3d91;
+  border: 2px solid #d5e1f2;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-weight: 600;
+  font-size: 12px;
+  box-shadow: none;
+}
+
+.photo-page-btn:hover:not(:disabled) {
+  border-color: #0b3d91;
+}
+
+.photo-page-btn:disabled {
+  color: #a9bcd6;
+  cursor: not-allowed;
+}
+
+.photo-page-label {
+  font-size: 12px;
+  color: #33507a;
+  font-weight: 600;
+}
+
+/* Candidate-file picker for attach-as-is sections (chem test, crack map, met report) when more
+   than one file matched the naming pattern -- lets the tech rep pick the real one directly
+   instead of only ever seeing whichever file the auto-pick heuristic happened to land on. */
+.attachment-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* No longer itself a <button> -- wraps a "select" button (the file name, most of the row) and a
+   small "remove" button (the "x", see .attachment-candidate-remove) side by side, since a button
+   can't nest inside another button in valid HTML. */
+.attachment-candidate {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  background: #ffffff;
+  border: 2px solid #d5e1f2;
+  border-radius: 8px;
+  padding: 2px 6px 2px 2px;
+}
+
+.attachment-candidate:hover:not(.selected) {
+  border-color: #0b3d91;
+}
+
+.attachment-candidate.selected {
+  border-color: #1a7431;
+  background: #f2faf4;
+}
+
+.attachment-candidate-select {
+  flex: 1;
+  text-align: left;
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 8px 8px;
+  font-weight: 600;
+  font-size: 13px;
+  color: #1a1a1a;
+  word-break: break-word;
+}
+
+.attachment-candidate-select:hover:not(:disabled) {
+  /* The generic button:hover rule (see its own comment further up this file) fills the whole
+     button navy on hover, same as any other button -- that rule doesn't touch text color, so
+     without this override the candidate's own dark label text sat unreadable on top of it. */
+  color: #ffffff;
+}
+
+.attachment-candidate.selected .attachment-candidate-select {
+  color: #1a7431;
+}
+
+/* Sits at the end of each candidate row -- lets the tech rep reject a wrong auto-matched
+   candidate outright (e.g. a Purchase Requisition that happened to match the Chem Test filename
+   pattern) rather than just not picking it, so it stops being offered on future rescans too. Same
+   low-contrast-until-hovered treatment as .manual-attachment-chip-remove. */
+.attachment-candidate-remove {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  line-height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #b9cce8;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.attachment-candidate:hover .attachment-candidate-remove {
+  color: #7d93bd;
+}
+
+.attachment-candidate-remove:hover:not(:disabled) {
+  background: #c0263b;
+  color: #ffffff;
+}
+
+.attachment-candidate-remove:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Inline preview panel that appears below the candidate list while hovering one of them --
+   the wrapping .attachment-picker (not the individual buttons) owns mouseleave so moving the
+   cursor from a button down into the preview itself doesn't dismiss it. */
+.attachment-preview {
+  margin-top: 10px;
+  border: 1px solid #d5e1f2;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(11, 61, 145, 0.08);
+  background: #f7fafd;
+}
+
+.attachment-preview iframe {
+  display: block;
+  width: 100%;
+  height: 520px;
+  border: none;
+}
+
+/* "Insert file manually" control -- shown in place of a missing exhibit/table (Chem Test,
+   Height Dim Form, Dovetail Dimension, Wall Thickness, Metallurgical Report) so the tech rep can
+   attach a file the automatic matching didn't find, instead of the section staying empty. The
+   real <input type="file"> is visually hidden and driven entirely via its <label>, so it gets the
+   same button styling as everything else instead of the browser's own file-input chrome. */
+.manual-attachment {
+  margin-top: 12px;
+  padding: 14px;
+  border: 2px dashed #b9cce8;
+  border-radius: 8px;
+  background: #f7fafd;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+/* A file dragged over the box from the desktop/Explorer -- same navy the rest of the app uses to
+   mean "this is active/selected", so it reads as a real drop target the instant something's
+   dragged over it, not just the resting dashed-border box. */
+.manual-attachment.dragging {
+  border-color: #0b3d91;
+  border-style: solid;
+  background: #eaf2fc;
+}
+
+.manual-attachment-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.manual-attachment-btn {
+  display: inline-block;
+  background: #ffffff;
+  color: #0b3d91;
+  border: 2px solid #0b3d91;
+  border-radius: 7px;
+  padding: 8px 16px;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.manual-attachment-btn:hover {
+  background: #0b3d91;
+  color: #ffffff;
+}
+
+.manual-attachment-input:focus-visible + .manual-attachment-btn {
+  outline: 2px solid #0b3d91;
+  outline-offset: 2px;
+}
+
+.manual-attachment-btn.busy {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.manual-attachment-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* One chip per file currently manually attached to this section, sitting right next to the
+   upload button -- see ManualAttachmentUpload's own comment. The "x" stays low-contrast until
+   the chip itself is hovered, so a row of several attached files doesn't read as a row of
+   delete buttons at rest. */
+.manual-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #ffffff;
+  border: 1px solid #b9cce8;
+  border-radius: 999px;
+  padding: 5px 6px 5px 12px;
+  font-size: 12px;
+  color: #142140;
+  max-width: 260px;
+}
+
+.manual-attachment-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manual-attachment-chip-remove {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  line-height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #b9cce8;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.manual-attachment-chip:hover .manual-attachment-chip-remove {
+  background: #c0263b;
+  color: #ffffff;
+}
+
+.manual-attachment-chip-remove:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.manual-attachment-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #33507a;
+}
+
+.folder-picker {
+  padding: 40px;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+/* Icon + wordmark lockup, styled like a real product logo rather than a plain page heading --
+   the mark sized to the text's cap-height, tight letter-spacing, brand navy. */
+.app-logo {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.app-logo-icon {
+  height: 50px;
+  width: auto;
+  flex-shrink: 0;
+  filter: drop-shadow(0 3px 6px rgba(11, 61, 145, 0.3));
+}
+
+/* Loading variant of the mark (AppLogoMark with animated=true) -- a pale grayscale copy sits
+   underneath a full-color copy whose clip-path grows from the top down on a loop, so color
+   appears to "pour" through the mark while a job is being scanned/drafted. */
+.app-logo-mark {
+  position: relative;
+  display: inline-flex;
+  height: 50px;
+  flex-shrink: 0;
+}
+
+.app-logo-mark-img {
+  height: 50px;
+  width: auto;
+  display: block;
+}
+
+.app-logo-mark-base {
+  filter: grayscale(1) opacity(0.22);
+}
+
+.app-logo-mark-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  filter: drop-shadow(0 3px 6px rgba(11, 61, 145, 0.3));
+  clip-path: inset(0 0 100% 0);
+  animation: app-logo-fill 2.2s ease-in-out infinite alternate;
+}
+
+@keyframes app-logo-fill {
+  from {
+    clip-path: inset(0 0 100% 0);
+  }
+  to {
+    clip-path: inset(0 0 0% 0);
+  }
+}
+
+.app-logo h1 {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  color: #0b3d91;
+  text-shadow: 0 1px 2px rgba(11, 61, 145, 0.12);
+}
+
+/* Small signature accent under the wordmark, echoing the blue-to-gray bar under the
+   letterhead on every page of the generated PDF report. */
+.app-logo-bar {
+  height: 3px;
+  width: 130px;
+  margin: 0 0 20px;
+  border-radius: 2px;
+  background: linear-gradient(to right, #0b3d91, #6fa3e0);
+}
+
+.folder-picker-subtitle {
+  margin: 0 0 20px;
+  color: #33507a;
+  font-size: 14px;
+}
+
+/* OneDrive / This PC quick-start tabs at the top of the folder-picker card -- two starting
+   points instead of only ever defaulting into OneDrive, since a tech rep's job folders can live
+   on either. Same pill-toggle look as .photo-filter-tab. */
+.folder-source-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.folder-source-tab {
+  background: rgba(255, 255, 255, 0.85);
+  color: #33507a;
+  border: 2px solid #d5e1f2;
+  border-radius: 999px;
+  padding: 7px 18px;
+  font-weight: 600;
+  font-size: 13px;
+  box-shadow: none;
+}
+
+.folder-source-tab:hover:not(.active) {
+  border-color: #0b3d91;
+  color: #0b3d91;
+}
+
+.folder-source-tab.active {
+  border-color: #0b3d91;
+  background: #0b3d91;
+  color: #ffffff;
+}
+
+/* The very first screen: which report to build, before any job folder is even picked. Two big
+   cards rather than the pill-toggle look above -- this is a one-time, higher-stakes choice for
+   the whole session (it decides which section list every request from here on uses), not a
+   quick filter toggle. */
+.report-type-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 340px;
+}
+
+.report-type-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.85);
+  color: #0b3d91;
+  border: 2px solid #d5e1f2;
+  border-radius: 12px;
+  padding: 16px 20px;
+  box-shadow: none;
+}
+
+.report-type-option:hover {
+  border-color: #0b3d91;
+  background: #0b3d91;
+  color: #ffffff;
+}
+
+.report-type-option-label {
+  font-weight: 700;
+  font-size: 16px;
+}
+
+.report-type-option-description {
+  font-weight: 400;
+  font-size: 13px;
+  color: #33507a;
+}
+
+.report-type-option:hover .report-type-option-description {
+  color: #ffffff;
+}
+
+/* Recursive job-folder search box -- finds a folder buried a level or two down in a "massive"
+   Working Jobs tree without knowing which numbered bucket it's under, instead of only ever
+   filtering whatever the current single level happens to show. */
+.folder-search {
+  position: relative;
+  margin: 4px 0 12px;
+}
+
+.folder-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #d5e1f2;
+  border-radius: 8px;
+  background: #fbfdff;
+  padding: 9px 34px 9px 12px;
+  font-size: 13px;
+  color: #1a1a1a;
+}
+
+.folder-search-input::placeholder {
+  color: #8098bd;
+}
+
+.folder-search-input:focus {
+  outline: none;
+  border-color: #0b3d91;
+  box-shadow: 0 0 0 3px rgba(11, 61, 145, 0.12);
+}
+
+.folder-search-clear {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: #8098bd;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 4px 6px;
+}
+
+.folder-search-clear:hover {
+  color: #0b3d91;
+}
+
+.folder-search-status {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6a7fa3;
+}
+
+.folder-search-hint {
+  margin: 8px 2px 0;
+  font-size: 12px;
+  color: #6a7fa3;
+}
+
+/* Frosted-glass panel holding the interactive part of the screen (path, buttons, list) --
+   floats it off the gradient/watermark backdrop instead of leaving those controls to sit
+   directly on it. */
+.folder-picker-card {
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 14px;
+  padding: 24px;
+  box-shadow: 0 20px 50px rgba(3, 12, 30, 0.2);
+}
+
+.folder-picker-error {
+  margin: 0 0 12px;
+}
+
+/* Path shown as a pill/badge instead of raw monospace text sitting loose on the panel. */
+.folder-picker-card .job-path {
+  display: inline-block;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 12px;
+  color: #0b3d91;
+  background: #eaf2fc;
+  border: 1px solid #cfe0f5;
+  border-radius: 999px;
+  padding: 6px 14px;
+  margin: 0;
+}
+
+/* Diagonal brand-blue gradient behind the folder-selection screen -- sits behind the logo
+   watermark (z-index -1, below) so the two layer cleanly: gradient, then logo, then content. */
+.folder-picker::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(135deg, #eaf3fc 0%, #cfe4fb 45%, #9dc2ec 75%, #6fa3e0 100%);
+  z-index: -2;
+  pointer-events: none;
+}
+
+/* Mark-only logo watermark behind the folder-selection screen specifically -- fixed to the
+   viewport (not sized to .folder-picker's own box, which is only as tall as its content) so it
+   covers the whole visible page behind it, and only exists while this screen is in the DOM. */
+.folder-picker::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: url("/apg-mark-transparent.png") bottom right / min(45vw, 520px) auto no-repeat;
+  opacity: 0.3;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.folder-list {
+  border: 2px solid #0b3d91;
+  border-radius: 4px;
+  max-height: 460px;
+  overflow-y: auto;
+  margin-top: 4px;
+  background: #ffffff;
+  box-shadow: 0 4px 14px rgba(11, 61, 145, 0.18);
+}
+
+.folder-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: #ffffff;
+  color: inherit;
+  font-weight: 700;
+  font-size: 15px;
+  border: none;
+  padding: 14px 18px;
+  margin-bottom: 3px;
+  /* Replaces the old flat border-bottom divider -- a tight downward shadow that reads as each
+     row sitting slightly above the next, instead of just a hairline between them. */
+  box-shadow: 0 3px 4px -2px rgba(11, 61, 145, 0.35);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.folder-list button:last-child {
+  margin-bottom: 0;
+  box-shadow: none;
+}
+
+.folder-list button:hover:not(:disabled) {
+  background: #082c6b;
+  color: #ffffff;
+}
+
+.folder-icon {
+  color: #0b3d91;
+  flex-shrink: 0;
+}
+
+.folder-list button:hover:not(:disabled) .folder-icon {
+  color: #ffffff;
+}
+
+.folder-list-loading,
+.folder-list-empty {
+  margin-top: 4px;
+  padding: 28px 18px;
+  text-align: center;
+  color: #6a7fa3;
+  font-size: 14px;
+  border: 2px solid #cfe0f5;
+  border-radius: 4px;
+  background: #ffffff;
+}
+
+@keyframes folder-list-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.folder-list-enter {
+  animation: folder-list-fade-in 0.2s ease;
+}
+
+.file-count {
+  font-size: 12px;
+  color: #777;
+}
