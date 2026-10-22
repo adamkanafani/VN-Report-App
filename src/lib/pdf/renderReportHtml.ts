@@ -157,39 +157,6 @@ async function photoToDataUri(absolutePath: string): Promise<string> {
   return `data:image/jpeg;base64,${buffer.toString("base64")}`;
 }
 
-let standardDiagramDataUriCache: string | null = null;
-
-/** APG's standard 7FA modification-reference diagram -- a fixed illustration (not one of the
- * job's own photos) showing the six standard modification callouts (shank lead-in cut, platform
- * scallop cut, trailing-edge platform undercut, dovetail serration relief cutback, shank feed
- * hole, platform film cooling holes) against a generic bucket drawing. Every real 7FA I&A report
- * includes this same image on its Engineering Summary page -- confirmed against a real completed
- * report -- so it's a static asset (public/reference), not something read from the job folder,
- * and cached per process the same way the letterhead logo is. */
-async function standardDiagramDataUri(): Promise<string> {
-  if (!standardDiagramDataUriCache) {
-    const buffer = await fs.readFile(path.join(process.cwd(), "public", "reference", "7fa-modification-diagram.png"));
-    standardDiagramDataUriCache = `data:image/png;base64,${buffer.toString("base64")}`;
-  }
-  return standardDiagramDataUriCache;
-}
-
-/** A 7FA bucket's turbine model reads like "F7FA" or "F7FA.03" -- prefix match, not exact, so a
- * dot-revision suffix doesn't fail the check. */
-const SEVEN_FA_PATTERN = /^F?7FA/i;
-
-/** Whether to embed the standard diagram on this job's I&A Summary page: on by default for any
- * 7FA job (see SEVEN_FA_PATTERN), off for anything else (the diagram is specific to 7FA's
- * modification set, not a generic illustration), and always overridable per job via
- * SectionState.includeStandardDiagram once the tech rep has made an explicit choice either way. */
-async function renderStandardDiagram(scan: JobScanResult, state: JobState): Promise<string> {
-  const isSevenFA = SEVEN_FA_PATTERN.test((scan.metadata.turbineModel ?? "").trim());
-  const included = state.sections["iaSummary"]?.includeStandardDiagram ?? isSevenFA;
-  if (!included) return "";
-  const dataUri = await standardDiagramDataUri();
-  return `<div class="summary-photos"><figure><img src="${dataUri}" /></figure></div>`;
-}
-
 async function renderPhotoSet(section: SectionScanResult, jobRoot: string, sectionState: SectionState | undefined): Promise<string> {
   const selectedPaths = sectionState?.selectedPhotoPaths;
   // No arbitrary cap here — the default is every matched photo, same as the real preselection
@@ -331,7 +298,7 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
   .photo-grid figure { width: 30%; margin: 0; }
   .photo-grid img { width: 100%; height: auto; border: 1px solid #ccc; }
   .photo-grid figcaption { font-size: 8px; color: #555; word-break: break-all; }
-  /* I&A Summary's standard reference diagram (7FA jobs only -- see renderStandardDiagram), placed
+  /* Reference figure block for a narrative page (currently unused in the V&N build), placed
      after the narrative text it illustrates. */
   .summary-photos { display: flex; gap: 12px; margin-top: 16px; }
   .summary-photos figure { flex: 1 1 0; margin: 0; min-width: 0; }
@@ -458,8 +425,7 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
       // within a narrower column instead, fitting far more steps per page while still reading
       // naturally -- and still flows onto another page on its own if a job's list is genuinely too
       // long, rather than forcing it to a fixed page count.
-      const standardDiagramHtml = id === "iaSummary" ? await renderStandardDiagram(scan, state) : "";
-      const body = id === "recommendedRepairs" ? `<div class="repairs-columns">${narrativeHtml}</div>` : `${narrativeHtml}${standardDiagramHtml}`;
+      const body = id === "recommendedRepairs" ? `<div class="repairs-columns">${narrativeHtml}</div>` : narrativeHtml;
       const sectionClass = [
         "report-page",
         "narrative-section",

@@ -1,7 +1,7 @@
 @echo off
-title Tech Rep Report Builder - Setup
+title Vanes and Nozzles Report Builder - Setup
 echo ============================================
-echo   Tech Rep Report Builder - First-Time Setup
+echo   Vanes and Nozzles Report Builder - First-Time Setup
 echo ============================================
 echo.
 echo Checking for Node.js...

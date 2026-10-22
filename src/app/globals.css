@@ -1571,3 +1571,21 @@ button.generate-report:active:not(:disabled) {
   font-size: 12px;
   color: #777;
 }
+
+/* Service-line tag above the wordmark -- this is the Vanes & Nozzles build of the APG report
+   builder, same shell as the Tech Rep (buckets/blades) app, so the only visible difference on the
+   landing screens is this small eyebrow line naming which service line it's for. */
+.app-wordmark {
+  display: flex;
+  flex-direction: column;
+  line-height: 1;
+}
+
+.app-wordmark-eyebrow {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #6a7683;
+  margin-bottom: 4px;
+}

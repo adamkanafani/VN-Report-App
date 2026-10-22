@@ -31,7 +31,7 @@ function ReportTypePicker({ onChosen }: { onChosen: (id: ReportTypeId) => void }
     <div className="folder-picker">
       <div className="app-logo">
         <AppLogoMark />
-        <h1>Report Builder</h1>
+        <AppWordmark />
       </div>
       <div className="app-logo-bar" />
       <p className="folder-picker-subtitle">Which report are you building?</p>
@@ -101,6 +101,17 @@ function AppLogoMark({ animated }: { animated?: boolean }) {
       <img src="/apg-mark-transparent.png" alt="" className="app-logo-mark-img app-logo-mark-base" />
       <img src="/apg-mark-transparent.png" alt="" className="app-logo-mark-img app-logo-mark-fill" />
     </span>
+  );
+}
+
+/** "Report Builder" wordmark with the service-line eyebrow above it -- the one visible branding
+ * difference from the Tech Rep (buckets/blades) app this shell is shared with. */
+function AppWordmark() {
+  return (
+    <div className="app-wordmark">
+      <span className="app-wordmark-eyebrow">Vanes &amp; Nozzles</span>
+      <h1>Report Builder</h1>
+    </div>
   );
 }
 
@@ -198,7 +209,7 @@ function FolderPicker({ onJobFolderChosen, onBack }: { onJobFolderChosen: (path:
     <div className="folder-picker">
       <div className="app-logo">
         <AppLogoMark />
-        <h1>Report Builder</h1>
+        <AppWordmark />
       </div>
       <div className="app-logo-bar" />
       <p className="folder-picker-subtitle">Pick the job folder to scan.</p>
@@ -690,12 +701,12 @@ function NarrativeEditor({
   jobRoot,
   section,
   onUpdated,
-  turbineModel,
+  reportType,
 }: {
   jobRoot: string;
   section: SectionWithState;
   onUpdated: (content: string) => void;
-  turbineModel: string;
+  reportType: ReportTypeId;
 }) {
   // Keyed by section.id in SectionPanel below, so this remounts (and re-derives its initial
   // state from `section`) whenever the reviewer switches sections — no sync effect needed.
@@ -709,7 +720,9 @@ function NarrativeEditor({
       const res = await fetch("/api/draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobRoot, sectionId: section.id, instruction: withInstruction }),
+        // reportType too, so the server re-scans against this report's own section list rather than
+        // defaulting to the I&A Report's (resolveReportTemplate's fallback).
+        body: JSON.stringify({ jobRoot, sectionId: section.id, instruction: withInstruction, reportType }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -762,60 +775,6 @@ function NarrativeEditor({
           Revise with instruction
         </button>
       </div>
-      {section.id === "iaSummary" && <StandardDiagramToggle jobRoot={jobRoot} section={section} turbineModel={turbineModel} />}
-    </div>
-  );
-}
-
-// Every real 7FA I&A report includes the same fixed reference diagram on its Engineering Summary
-// page (see renderReportHtml.ts's renderStandardDiagram) -- this mirrors that same 7FA check so
-// the toggle only shows up on the jobs it actually applies to.
-const SEVEN_FA_PATTERN = /^F?7FA/i;
-
-/** Lets the tech rep turn APG's standard 7FA modification-reference diagram on or off for this
- * job's I&A Summary page. On by default for any 7FA job (matching the real completed report,
- * which always includes it) -- this is a fixed illustration, not one of the job's own photos, so
- * there's nothing to pick, just whether to include it. */
-function StandardDiagramToggle({ jobRoot, section, turbineModel }: { jobRoot: string; section: SectionWithState; turbineModel: string }) {
-  const isSevenFA = SEVEN_FA_PATTERN.test(turbineModel.trim());
-  // Keyed by section.id in SectionPanel below, so a section switch remounts this fresh.
-  const [included, setIncluded] = useState(section.state.includeStandardDiagram ?? isSevenFA);
-  const [busy, setBusy] = useState(false);
-
-  if (!isSevenFA) return null;
-
-  const toggle = async () => {
-    const next = !included;
-    setIncluded(next);
-    setBusy(true);
-    try {
-      await fetch("/api/section-state", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobRoot, sectionId: "iaSummary", patch: { includeStandardDiagram: next } }),
-      });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="standard-diagram-toggle">
-      <h3 style={{ fontSize: 14, margin: "20px 0 4px" }}>Standard 7FA Reference Diagram</h3>
-      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: busy ? "default" : "pointer" }}>
-        <input type="checkbox" checked={included} disabled={busy} onChange={toggle} />
-        <span className="file-count" style={{ margin: 0 }}>
-          Include APG&apos;s standard 7FA modification-reference diagram on this page — every 7FA report includes it by
-          default; uncheck to leave it out for this job.
-        </span>
-      </label>
-      {included && (
-        <img
-          src="/reference/7fa-modification-diagram.png"
-          alt="Standard 7FA modification-reference diagram"
-          style={{ maxWidth: 320, marginTop: 8, border: "1px solid #ccc", borderRadius: 4 }}
-        />
-      )}
     </div>
   );
 }
@@ -1275,10 +1234,12 @@ function SectionPanel({
   onReviewed,
   onToggleExcluded,
   patchSectionState,
+  reportType,
 }: {
   jobRoot: string;
   section: SectionWithState;
   metadata: JobScanResult["metadata"];
+  reportType: ReportTypeId;
   onRefresh: () => void;
   onReviewed: (acknowledged: boolean) => void;
   onToggleExcluded: (excluded: boolean) => void;
@@ -1356,7 +1317,7 @@ function SectionPanel({
           jobRoot={jobRoot}
           section={section}
           onUpdated={onRefresh}
-          turbineModel={metadata.turbineModel}
+          reportType={reportType}
         />
       )}
       {section.generation === "table-from-source" && (
@@ -1530,7 +1491,7 @@ export default function Home() {
       <div className="folder-picker">
         <div className="app-logo">
           <AppLogoMark animated={loading} />
-          <h1>Report Builder</h1>
+          <AppWordmark />
         </div>
         <div className="app-logo-bar" />
         <p className="folder-picker-subtitle">{loading ? "Analyzing job files and building the initial draft…" : "Something went wrong loading this job."}</p>
@@ -1652,6 +1613,7 @@ export default function Home() {
             onReviewed={(acknowledged) => markReviewed(selectedSection.id, acknowledged)}
             onToggleExcluded={(excluded) => setExcludeFromReport(selectedSection.id, excluded)}
             patchSectionState={patchSectionState}
+            reportType={reportType}
           />
         </main>
       </div>

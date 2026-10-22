@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Report Builder",
-  description: "Draft and review Allied Power Group I&A reports from a job folder.",
+  title: "V&N Report Builder",
+  description: "Draft and review Allied Power Group Vanes & Nozzles reports from a job folder.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

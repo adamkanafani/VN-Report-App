@@ -1,4 +1,4 @@
-# Tech Rep Report Builder — Setup Guide
+# Vanes & Nozzles Report Builder — Setup Guide
 
 This app runs on your own computer and reads your job folders directly, so
 each tech rep needs their own copy running locally. It does **not** need an
@@ -29,10 +29,10 @@ Documents — right-click inside it, choose **"Open in Terminal"** (or
 "Git Bash Here" if you see that option), and run:
 
 ```
-git clone https://github.com/jzimmermann7/Tech-Rep-Report-App.git
+git clone <V&N repo URL - TBD>
 ```
 
-This creates a new folder called `Tech-Rep-Report-App`. Open that folder.
+This creates a new folder called `VN-Report-App`. Open that folder.
 
 ### 4. Run setup
 
@@ -45,7 +45,7 @@ done — press any key to close the window.
 
 Double-click **`Start Report Builder.bat`**. Two things will happen:
 
-- A window titled **"Tech Rep Report Builder - Server"** opens. **Leave this
+- A window titled **"Vanes & Nozzles Report Builder - Server"** opens. **Leave this
   open** while you work (you can minimize it) — closing it shuts the app
   down. Close it when you're done for the day.
 - Your web browser opens the app automatically a few seconds later.

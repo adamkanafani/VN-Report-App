@@ -1,6 +1,6 @@
 @echo off
-title Tech Rep Report Builder - Launcher
-echo Starting Tech Rep Report Builder...
+title Vanes and Nozzles Report Builder - Launcher
+echo Starting Vanes and Nozzles Report Builder...
 echo.
 echo A new window will open running the app - leave THAT window open while you
 echo work (you can minimize it). Your browser will open automatically in a
@@ -13,7 +13,7 @@ if not exist ".next" (
   pause
   exit /b 1
 )
-start "Tech Rep Report Builder - Server (leave this open)" cmd /k "npm run start"
+start "Vanes and Nozzles Report Builder - Server (leave this open)" cmd /k "npm run start -- -p 3001"
 timeout /t 5 /nobreak >nul
-start "" http://localhost:3000
+start "" http://localhost:3001
 exit

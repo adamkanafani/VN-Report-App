@@ -123,7 +123,7 @@ export function ensureReportStartDate(state: JobState): boolean {
 
 function stateDir(): string {
   const base = process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
-  return path.join(base, "TechRepReportApp", "jobs");
+  return path.join(base, "VNReportApp", "jobs");
 }
 
 function stateFilePath(jobRoot: string): string {

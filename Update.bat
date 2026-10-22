@@ -1,7 +1,7 @@
 @echo off
-title Tech Rep Report Builder - Update
+title Vanes and Nozzles Report Builder - Update
 echo ============================================
-echo   Tech Rep Report Builder - Update
+echo   Vanes and Nozzles Report Builder - Update
 echo ============================================
 echo.
 echo Downloading the latest version...
