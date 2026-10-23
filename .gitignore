@@ -45,3 +45,6 @@ next-env.d.ts
 # be committed, only ever a local test artifact
 /*.pdf
 /scratch_*
+
+# sample outputs generated from real job folders -- customer data, never committed
+/samples/
