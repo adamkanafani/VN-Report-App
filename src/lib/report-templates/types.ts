@@ -57,10 +57,19 @@ export interface SectionConfig {
    * out selected -- e.g. 7B often holds both "DS-0079 ... Final.xlsx" and an un-suffixed working
    * copy of the same sheet (Job 20505), and only the "Final" one belongs in the Repair Report. */
   preferPattern?: RegExp;
+  /** For attach-multi sections: "date" prints the files oldest-first by their file date instead
+   * of in router form order (heat treat charts, in the order the cycles ran). */
+  sortBy?: "date";
   /** Print a divider page (letterhead + the section title, large and centered) ahead of this
    * section's exhibits -- APG's V&N reports open every block of appended forms with one, since
    * the forms themselves carry no report-level heading. */
   divider?: boolean;
+  /** Printed ahead of the cover page instead of in section order -- customer-supplied front pages
+   * such as Calpine's "Repair Detail Summary" (Job 20564). */
+  beforeCover?: boolean;
+  /** Starts out left out of the report (the tech rep can add it back from the sidebar) -- for
+   * sections only some customers want, e.g. the Repair Report repeating the incoming exhibits. */
+  defaultExcluded?: boolean;
 }
 
 export interface ReportTemplate {

@@ -100,10 +100,11 @@ export function buildEngineeringSummaryDraft(params: {
   router?: ParsedRouter;
   /** DS sheet file names found in 7A, used only when there's no router to list the forms. */
   dimFileNames: string[];
+  measurements?: import("../ingest/measurements").JobMeasurements;
   crackMapAvailable: boolean;
   metSampleAvailable: boolean;
 }): string {
-  const { metadata, router, dimFileNames, crackMapAvailable, metSampleAvailable } = params;
+  const { metadata, router, dimFileNames, crackMapAvailable, metSampleAvailable, measurements } = params;
   const { isVane, stage, isGe } = classifyPart(metadata);
   const { subject, plural, noun } = receivedPhrase(metadata);
 
@@ -137,7 +138,10 @@ export function buildEngineeringSummaryDraft(params: {
 
   lines.push("Dimensional Inspection:");
   if (!isVane && dimForms.some((f) => AREA_FORMS.has(f.form) || /area/i.test(f.title))) {
-    lines.push("- Total nozzle area deviation is [+x.xx%], with individual throat deviations ranging from [-x.xx%] to [+x.xx%] (design requirement [-0.5% to +2.5%]).");
+    const m = measurements;
+    lines.push(
+      `- The total nozzle area range is at ${m?.areaDeviation ?? "[+x.xx%]"} with individual throat deviations ranging from ${m?.throatMin ?? "[-x.xx%]"} to ${m?.throatMax ?? "[+x.xx%]"}`
+    );
   }
   const otherDims = dimForms.filter((f) => !(AREA_FORMS.has(f.form) || /area/i.test(f.title)));
   if (otherDims.length > 0) {
@@ -147,6 +151,7 @@ export function buildEngineeringSummaryDraft(params: {
   } else if (dimForms.length === 0) {
     lines.push("- [No dimensional data sheets were found for this job — summarize the dimensional results here.]");
   }
+  for (const [side, range] of Object.entries(measurements?.flowRanges ?? {})) lines.push(`- Incoming flow range on the ${side} side is at ${range}`);
   lines.push("");
 
   if (metSampleAvailable) {
@@ -224,28 +229,104 @@ export function buildRepairRecommendationsDraft(router: ParsedRouter): string {
   return repairList(router, "APG recommends the following repairs:", (s) => s);
 }
 
-// Imperative router verbs → past tense for the Repair Summary ("Blast clean components" → "Blasted
-// clean components"). Anything not listed is left as written for the tech rep to adjust.
+// Present → past tense for the Repair Summary. Alfredo's Repair Summary is his I&A Repair
+// Recommendations with the verbs put in the past tense, line for line (Job 20564): "Weld/Blend
+// repair all marked indications" → "Weld/Blend repaired ...", "Perform an in-process assembly and
+// verify dimensions" → "Performed ... and verified ...", "Weld build ..." → "Weld built ...",
+// "Touch-up as needed" → "Touched-up as needed". Anything not recognized is left as written.
 const PAST_TENSE: Record<string, string> = {
-  apply: "Applied", assemble: "Assembled", blast: "Blasted", blend: "Blended", bolt: "Bolted", box: "Boxed",
-  braze: "Brazed", check: "Checked", clean: "Cleaned", coat: "Coated", disassemble: "Disassembled",
-  grind: "Ground", inspect: "Inspected", install: "Installed", machine: "Machined", measure: "Measured",
-  perform: "Performed", polish: "Polished", record: "Recorded", remove: "Removed", repair: "Repaired",
-  replace: "Replaced", restore: "Restored", reweld: "Re-welded", "re-weld": "Re-welded", send: "Sent",
-  ship: "Shipped", straighten: "Straightened", strip: "Stripped", tack: "Tacked", weld: "Welded", witness: "Witnessed",
+  adjust: "adjusted", apply: "applied", assemble: "assembled", blast: "blasted", blend: "blended", bolt: "bolted",
+  box: "boxed", braze: "brazed", build: "built", check: "checked", clean: "cleaned", clear: "cleared", coat: "coated",
+  correct: "corrected", cut: "cut", deburr: "deburred", disassemble: "disassembled", drill: "drilled",
+  ensure: "ensured", fit: "fit", grind: "ground", inspect: "inspected", install: "installed", jack: "jacked",
+  machine: "machined", make: "made", mark: "marked", mask: "masked", measure: "measured", perform: "performed",
+  polish: "polished", receive: "received", record: "recorded", remove: "removed", repair: "repaired",
+  replace: "replaced", restore: "restored", review: "reviewed", reweld: "re-welded", run: "ran", send: "sent",
+  ship: "shipped", straighten: "straightened", strip: "stripped", tack: "tacked", touch: "touched", verify: "verified",
+  weld: "welded", witness: "witnessed", continue: "continued", "re-assemble": "re-assembled", reassemble: "reassembled",
+  "touch-up": "touched-up", "re-install": "re-installed", "pre-assemble": "pre-assembled",
 };
+// Words that sit in front of the real verb ("Weld build", "Hand blend", "Final assemble",
+// "Grit blast", "Heat treat" -- where "treat" is the verb).
+const VERB_PREFIXES = new Set(["weld", "hand", "final", "grit", "heat", "wire", "dust", "weld/blend", "re-", "post", "pre"]);
+const EXTRA_PAST: Record<string, string> = { treat: "treated", tint: "tinted", "repair/blend": "repaired/blended" };
 
-function toPastTense(step: string): string {
-  // Two-word verbs first ("Heat treat segments", "Heat tint segments", "Grit blast ...").
-  const twoWord = step.match(/^(heat\s+treat|heat\s+tint|grit\s+blast|wire\s+check|weld\s+repair)\b(.*)$/i);
-  if (twoWord) {
-    const verb = twoWord[1].toLowerCase().replace(/\s+/, " ");
-    const past = { "heat treat": "Heat treated", "heat tint": "Heat tinted", "grit blast": "Grit blasted", "wire check": "Wire checked", "weld repair": "Weld repaired" }[verb];
-    return `${past}${twoWord[2]}`;
+function pastOf(word: string): string | undefined {
+  const lower = word.toLowerCase();
+  const past = PAST_TENSE[lower] ?? EXTRA_PAST[lower];
+  if (!past) return undefined;
+  return word[0] === word[0].toUpperCase() ? past[0].toUpperCase() + past.slice(1) : past;
+}
+
+export function toPastTense(step: string): string {
+  const words = step.split(" ");
+  // The main verb: the first word, or the second when the first is a modifier ("Weld build").
+  let i = 0;
+  if (VERB_PREFIXES.has(words[0].toLowerCase()) && words[1] && pastOf(words[1])) i = 1;
+  else if (!pastOf(words[0])) return step;
+  words[i] = pastOf(words[i])!;
+  // A second verb joined by "and" ("... assembly and verify dimensions").
+  for (let j = i + 1; j < words.length - 1; j++) {
+    if (words[j].toLowerCase() !== "and") continue;
+    // "... and hand blend ..." -- skip a modifier in front of the second verb too.
+    const k = VERB_PREFIXES.has(words[j + 1].toLowerCase()) && words[j + 2] && pastOf(words[j + 2]) ? j + 2 : j + 1;
+    if (pastOf(words[k])) {
+      words[k] = pastOf(words[k])!;
+      break;
+    }
   }
-  const [first, ...rest] = step.split(" ");
-  const past = PAST_TENSE[first.toLowerCase()];
-  return past ? [past, ...rest].join(" ") : step;
+  return words.join(" ");
+}
+
+/** The Repair Summary drafted from this job's own Repair Recommendations text (markup in, markup
+ * out): the lead-in becomes "APG performed the following repairs:", every bullet goes to the past
+ * tense, headings ("Segment Repair:") and blank lines are kept. */
+export function recommendationsToSummary(recommendations: string): string {
+  return recommendations
+    .split("\n")
+    .map((line) => {
+      if (/^apg recommends the following repairs:?$/i.test(line.trim())) return "APG performed the following repairs:";
+      return line.startsWith("- ") ? `- ${toPastTense(line.slice(2))}` : line;
+    })
+    .join("\n");
+}
+
+const SPELLED_COUNT = /\b(?:(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)[\s-]?)+\(\d+\)/gi;
+
+/** A past report's Engineering Summary, adapted to this job: the received date and every measured
+ * value this app could read (area, throat range, flow ranges -- see measurements.ts) swapped in;
+ * every other job-specific value (counts like "Twenty six (26)", inch readings, other
+ * percentages) kept but wrapped in [brackets] so the tech rep checks each one. */
+export function adaptPriorSummary(text: string, m: import("../ingest/measurements").JobMeasurements): string {
+  const filled = new Set<string>();
+  let out = text.replace(/(received on )(\d{1,2}\/\d{1,2}\/\d{2,4})/i, (_, lead, old) => `${lead}${m.receivedDate ?? `[${old}]`}`);
+  out = out.replace(/(area (?:range )?is (?:at )?)([+-]?\d+(?:\.\d+)?%)/i, (all, lead, old) => {
+    if (!m.areaDeviation) return all;
+    filled.add(m.areaDeviation);
+    return `${lead}${m.areaDeviation}`;
+  });
+  out = out.replace(/(ranging from )([+-]?\d+(?:\.\d+)?%)( to )([+-]?\d+(?:\.\d+)?%)/i, (all, a, _min, b) => {
+    if (!m.throatMin || !m.throatMax) return all;
+    filled.add(m.throatMin).add(m.throatMax);
+    return `${a}${m.throatMin}${b}${m.throatMax}`;
+  });
+  out = out.replace(/(flow range on the (OD T\/E|ID L\/E) side is (?:at )?)(\d+(?:\.\d+)?%)/gi, (all, lead, side) => {
+    const v = m.flowRanges[side.toUpperCase().replace("T/E", "T/E")] ?? m.flowRanges[side];
+    if (!v) return all;
+    filled.add(v);
+    return `${lead}${v}`;
+  });
+  // Bracket what's left in the findings bullets (not the opening paragraph or headings).
+  return out
+    .split("\n")
+    .map((line) => {
+      if (!line.startsWith("- ")) return line;
+      return line
+        .replace(SPELLED_COUNT, (x) => `[${x}]`)
+        .replace(/(?<![\[\d.])([+-]?\d*\.\d+\s*(?:”|"|in\b))/g, "[$1]")
+        .replace(/(?<![\[\d.])([+-]?\d+(?:\.\d+)?%)/g, (x) => (filled.has(x) ? x : `[${x}]`));
+    })
+    .join("\n");
 }
 
 /** Repair Summary (Repair Report) -- "APG performed the following repairs:" with the same repair

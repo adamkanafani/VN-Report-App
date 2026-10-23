@@ -5,7 +5,7 @@ import type { JobScanResult, SectionScanResult } from "@/lib/ingest/scanJobFolde
 import type { JobFile } from "@/lib/ingest/fileWalk";
 import { COVER_FIELD_ORDER } from "@/lib/ingest/jobMetadata";
 import type { SectionState } from "@/lib/state/jobState";
-import { effectiveMultiSelection } from "@/lib/state/selection";
+import { effectiveMultiSelection, isExcluded } from "@/lib/state/selection";
 
 type SectionWithState = SectionScanResult & { state: SectionState };
 type ScanResponse = Omit<JobScanResult, "sections"> & { sections: SectionWithState[]; sectionOrder?: string[] };
@@ -54,7 +54,7 @@ function ReportTypePicker({ onChosen }: { onChosen: (id: ReportTypeId) => void }
  * it out with the ✕), or "empty" (a table section with no data and no completed form to embed --
  * renderReportHtml.ts leaves these out automatically). Mirrors that file's own checks. */
 function omittedReason(s: SectionWithState): "removed" | "empty" | null {
-  if (s.state.excludeFromReport) return "removed";
+  if (isExcluded(s, s.state)) return "removed";
   if (s.generation === "attach-multi" && effectiveMultiSelection(s, s.state).length === 0) return "empty";
   if (s.generation === "table-from-source") {
     const printPdfInUse = Boolean(s.printPdfFile) && !s.state.excludePrintPdf;
@@ -733,8 +733,49 @@ function NarrativeEditor({
     }
   };
 
+  // Throw the current text away and redraft: "auto" starts from the last report of the same
+  // product again (this job's own recommendations, for the Repair Summary), "router" uses only
+  // this job's routers.
+  const startOver = async (source: "auto" | "router") => {
+    if (draft.trim() && !confirm("Replace the current text with a fresh draft? Your edits to this section will be lost.")) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobRoot, sectionId: section.id, reportType, source }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setDraft(data.content ?? "");
+      onUpdated(data.content ?? "");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Draft failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div>
+      <div className="seeded-note">
+        <span>
+          {section.state.seededFrom ? (
+            <>
+              Started from <strong>{section.state.seededFrom}</strong> — same product, earlier job. Measured values were filled in where this job&apos;s sheets
+              have them; anything in [brackets] is the old job&apos;s value — check it.
+            </>
+          ) : (
+            "Drafted from this job's routers — no earlier report of the same product was found."
+          )}
+        </span>
+        <button type="button" className="secondary" disabled={busy} onClick={() => startOver("auto")}>
+          Start over from last report
+        </button>
+        <button type="button" className="secondary" disabled={busy} onClick={() => startOver("router")}>
+          Start over from router
+        </button>
+      </div>
       {section.state.draftError && !draft && (
         <p className="confidence-note" style={{ color: "#a4141a" }}>
           ⚠ Automatic draft generation didn&apos;t produce a draft for this section: {section.state.draftError} Write it manually below, or use &quot;Revise with
@@ -1294,7 +1335,7 @@ function CoverEditor({
                 return (
                   <tr key={key} {...rowProps}>
                     {dragHandle}
-                    <th style={{ width: 170, textAlign: "left" }}>{fixed.label}</th>
+                    <th style={{ width: 170, textAlign: "left" }}>{fixed.uiLabel ?? fixed.label}</th>
                     <td>
                       <input
                         type="text"
@@ -1456,7 +1497,8 @@ export default function Home() {
   const [scan, setScan] = useState<ScanResponse | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [generating, setGenerating] = useState(false);
+  // Which export is running (drives the overlay text); null when idle.
+  const [generating, setGenerating] = useState<null | "pdf" | "deck" | "final">(null);
   // Which sidebar row is being dragged / currently dragged over, purely for the drag-and-drop
   // visual feedback below (dimming the dragged row, highlighting the drop target) -- the actual
   // reorder itself only happens on drop, via reorderSections.
@@ -1558,49 +1600,98 @@ export default function Home() {
     });
   };
 
+  /** Saves a response body as a download -- appended to the DOM and the object URL kept alive for
+   * a beat, since revoking immediately raced the browser's own read of a large blob (a truncated
+   * "saved" PDF that wouldn't open). */
+  const saveDownload = async (res: Response, fallbackName: string) => {
+    const name = decodeURIComponent(res.headers.get("X-File-Name") ?? "") || fallbackName;
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  };
+
+  const headerList = (res: Response, header: string): string[] => {
+    try {
+      return JSON.parse(decodeURIComponent(res.headers.get(header) ?? "%5B%5D"));
+    } catch {
+      return [];
+    }
+  };
+
+  /** Exhibits that couldn't be embedded (an Excel-only sheet with no Excel install to print it, a
+   * met report saved as a photo, ...) and blocks whose divider slide wasn't in the edited deck --
+   * the PDF still downloads, but say what's missing. */
+  const reportOmissions = (res: Response) => {
+    const skipped = headerList(res, "X-Skipped-Attachments");
+    const unmatched = headerList(res, "X-Unmatched-Sections");
+    const notes: string[] = [];
+    if (skipped.length > 0) notes.push(`These files couldn't be included:\n${skipped.join("\n")}\n\nPrint them to PDF in the same folder and try again.`);
+    if (unmatched.length > 0)
+      notes.push(`No divider slide was found for:\n${unmatched.join("\n")}\n\nTheir exhibits were left out. Keep each divider slide's title as it was generated (or re-add the slide) and build again.`);
+    if (notes.length > 0) alert(`The PDF was built, but:\n\n${notes.join("\n\n")}`);
+  };
+
+  const failMessage = async (res: Response, fallback: string) => {
+    try {
+      return (await res.json()).error ?? fallback;
+    } catch {
+      return fallback;
+    }
+  };
+
+  // Quick PDF straight from the app, no PowerPoint step.
   const generateReport = async () => {
     if (!jobRoot) return;
-    setGenerating(true);
+    setGenerating("pdf");
     try {
-      const res = await fetch("/api/generate-pdf", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobRoot, reportType }),
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error);
-      }
-      // Exhibits that couldn't be embedded (an Excel-only sheet with no Excel install to print it,
-      // a met report saved as a photo, ...) -- the PDF still downloads, but say what's missing.
-      let skipped: string[] = [];
-      try {
-        skipped = JSON.parse(decodeURIComponent(res.headers.get("X-Skipped-Attachments") ?? "%5B%5D"));
-      } catch {
-        // header missing or malformed -- nothing to report
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${scan?.metadata.jobNumber ?? "report"} ${reportType === "final" ? "Repair" : "IA"} Report.pdf`;
-      // Appended to the DOM (some browsers won't fire the download from a detached anchor) and the
-      // object URL is kept alive for a beat after the click instead of revoked immediately -- a
-      // Final Report's PDF runs several MB (all those inline exhibits/photos), and revoking
-      // synchronously raced the browser's own read of the blob on exactly that larger file, so it
-      // reported a "saved" download that was actually truncated and wouldn't open. The I&A Report's
-      // smaller PDF rarely hit the race, which is why this only showed up on Final Reports.
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
-      if (skipped.length > 0) {
-        alert(`The report was generated, but these files couldn't be included:\n\n${skipped.join("\n")}\n\nPrint them to PDF in the same folder and generate again.`);
-      }
+      const res = await fetch("/api/generate-pdf", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobRoot, reportType }) });
+      if (!res.ok) throw new Error(await failMessage(res, "PDF generation failed"));
+      await saveDownload(res, `${scan?.metadata.jobNumber ?? "report"} ${reportType === "final" ? "Repair" : "IA"} Report.pdf`);
+      reportOmissions(res);
     } catch (e) {
       alert(e instanceof Error ? e.message : "PDF generation failed");
     } finally {
-      setGenerating(false);
+      setGenerating(null);
+    }
+  };
+
+  // Step 1 of Alfredo's workflow: the report as an editable PowerPoint in his deck format.
+  const downloadDeck = async () => {
+    if (!jobRoot) return;
+    setGenerating("deck");
+    try {
+      const res = await fetch("/api/deck", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobRoot, reportType }) });
+      if (!res.ok) throw new Error(await failMessage(res, "PowerPoint export failed"));
+      await saveDownload(res, `${scan?.metadata.jobNumber ?? "report"} ${reportType === "final" ? "Repair" : "IA"} Report.pptx`);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "PowerPoint export failed");
+    } finally {
+      setGenerating(null);
+    }
+  };
+
+  // Step 2: his edited deck back in → finished PDF with every exhibit inserted after its divider.
+  const buildFromDeck = async (file: File) => {
+    if (!jobRoot) return;
+    setGenerating("final");
+    try {
+      const form = new FormData();
+      form.append("jobRoot", jobRoot);
+      form.append("reportType", reportType ?? "ia");
+      form.append("file", file);
+      const res = await fetch("/api/final-from-deck", { method: "POST", body: form });
+      if (!res.ok) throw new Error(await failMessage(res, "Building the PDF failed"));
+      await saveDownload(res, file.name.replace(/\.pptx$/i, ".pdf"));
+      reportOmissions(res);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Building the PDF failed");
+    } finally {
+      setGenerating(null);
     }
   };
 
@@ -1721,10 +1812,10 @@ export default function Home() {
                   <button
                     type="button"
                     className="section-remove-btn"
-                    title={s.state.excludeFromReport ? `Add "${s.title}" back to the report` : `Leave "${s.title}" out of the report`}
-                    onClick={() => setExcludeFromReport(s.id, !s.state.excludeFromReport)}
+                    title={isExcluded(s, s.state) ? `Add "${s.title}" back to the report` : `Leave "${s.title}" out of the report`}
+                    onClick={() => setExcludeFromReport(s.id, !isExcluded(s, s.state))}
                   >
-                    {s.state.excludeFromReport ? "↺" : "✕"}
+                    {isExcluded(s, s.state) ? "↺" : "✕"}
                   </button>
                 )}
               </div>
@@ -1749,8 +1840,27 @@ export default function Home() {
       </div>
       <footer className="app-header" style={{ justifyContent: "flex-end" }}>
         {!allAddressed && <span className="confidence-note">Some sections still need attention.</span>}
-        <button className="generate-report" disabled={generating} onClick={generateReport}>
-          {generating ? "Generating..." : "Generate Report"}
+        <button className="secondary" disabled={generating !== null} onClick={generateReport} title="Build the PDF straight from the app, without a PowerPoint step">
+          Quick PDF
+        </button>
+        <input
+          id="edited-deck-input"
+          type="file"
+          accept=".pptx"
+          className="manual-attachment-input"
+          disabled={generating !== null}
+          onChange={(e) => {
+            // Snapshotted before clearing, so picking the same file again re-fires onChange.
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) buildFromDeck(file);
+          }}
+        />
+        <label htmlFor="edited-deck-input" className={`button-like secondary ${generating !== null ? "disabled" : ""}`} title="Pick your edited PowerPoint -- the PDF gets every exhibit inserted after its divider slide">
+          2. Build PDF from edited PowerPoint…
+        </label>
+        <button className="generate-report" disabled={generating !== null} onClick={downloadDeck}>
+          {generating === "deck" ? "Building PowerPoint..." : "1. Download PowerPoint"}
         </button>
       </footer>
       {/* Same fill-loop mark as the initial job-scan screen, in an overlay rather than a full
@@ -1761,8 +1871,14 @@ export default function Home() {
         <div className="generating-overlay">
           <div className="generating-overlay-card">
             <AppLogoMark animated />
-            <p className="generating-overlay-text">Generating report…</p>
-            <p className="generating-overlay-hint">Assembling every section and exhibit into the final PDF.</p>
+            <p className="generating-overlay-text">{generating === "deck" ? "Building PowerPoint…" : "Generating report…"}</p>
+            <p className="generating-overlay-hint">
+              {generating === "deck"
+                ? "Laying out the cover, summary, repairs, dividers and photo slides."
+                : generating === "final"
+                  ? "Exporting your deck through PowerPoint and inserting every exhibit after its divider slide — a few minutes on a big job."
+                  : "Assembling every section and exhibit into the final PDF."}
+            </p>
           </div>
         </div>
       )}

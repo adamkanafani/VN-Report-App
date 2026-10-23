@@ -1,11 +1,29 @@
 # Vanes & Nozzles Report Builder
 
-The Vanes & Nozzles (V&N) version of APG's report builder. It uses the same shell, look and workflow as the Tech Rep (buckets) Report Builder.
+The Vanes & Nozzles (V&N) version of APG's report builder. It uses the same shell, look and workflow as the Tech Rep (buckets) Report Builder, built around how the V&N team finishes reports: **in PowerPoint**.
 
-To use it, pick a report type, point the app at a V&N job folder, review what it found and drafted, and export the finished PDF:
-
+The two report types are:
 - **I&A Report** → the **"Incoming Report"** (inspect & advise)
 - **Final Report** → the **"Repair Report"** (the completion deliverable)
+
+## Workflow
+
+1. **Pick the report type and the job folder.** The app scans the folder, finds every exhibit and drafts the narrative sections.
+2. **Review in the app.** Tick, untick and reorder exhibits, check the drafts, fill in the cover.
+3. **1. Download PowerPoint.** This gives an editable deck in Alfredo Resendiz's own format:
+   - cover and component-details slides
+   - Incoming Engineering Summary
+   - Repair Recommendations / Repair Summary
+   - a divider slide per exhibit block
+   - photo slides, 6 per slide
+4. **Edit the deck in PowerPoint** as usual: fix anything the floor got wrong, add customer-specific lines, move photos. Save it.
+5. **2. Build PDF from edited PowerPoint….** Pick the saved deck:
+   - PowerPoint exports it.
+   - The app inserts every block's real completed forms (DS sheets, NDT reports, heat treat charts, coating cert, …) right after that block's divider slide.
+   - Customer front pages (e.g. Calpine's Repair Detail Summary) go ahead of the cover.
+   - Divider slides are found by their text, so **keep each divider's title as generated**. Everything else in the deck can be edited, reordered or deleted.
+
+**Quick PDF** skips the PowerPoint step and builds the PDF straight from the app.
 
 ## Setup
 
@@ -16,77 +34,76 @@ npm run dev -- -p 3001
 
 Open http://localhost:3001. Port 3001 lets it run next to the Tech Rep app, which uses 3000. For day-to-day use, see `SETUP.md`: double-click `Setup - Run This First.bat` once, then `Start Report Builder.bat`.
 
-`ANTHROPIC_API_KEY` is optional. Without it:
-- Scanning, every draft, and PDF export work normally.
-- Photo screening includes every photo instead of filtering out duplicates and blurry shots.
-- "Revise with instruction" is unavailable.
+Requirements:
+- **Chrome or Edge**, for PDF rendering.
+- **Desktop PowerPoint**, for "Build PDF from edited PowerPoint".
+- **Desktop Excel**, only for exhibits that exist only as `.xlsx` (common for final DS sheets). They're printed through Excel; without it they're listed as skipped.
+- `ANTHROPIC_API_KEY` is optional:
+  - It's only used for "Revise with instruction" and for photo duplicate/blur screening.
+  - Without it, scanning, every draft and both exports work normally.
 
-**PDF export** needs Chrome or Edge.
+## How the drafts are made
 
-**Excel-only exhibits** need desktop Excel. These are DS sheets or NDT forms that exist only as `.xlsx`, which is common for final-stage sheets. They're printed to PDF through Excel when the report is generated. Without Excel they're listed as skipped after export.
+**Starting from the last report of the same product.** Alfredo's reports reuse most of their wording per product:
+- Across 9 F7EA 1st stage nozzle I&A reports, 21 Repair Recommendations lines appear in every one, and 85–95% of each list is shared.
+- The Engineering Summary has the same subheadings every time, with many findings repeated word for word.
 
-## What it's built from
+So for a new job the app finds the **most recent finished report deck of the same model and stage/row** in the same Working Jobs tree, and starts from its wording (`src/lib/draft/priorReport.ts`).
 
-The section lists, file-matching rules and draft wording come from a survey of real V&N job folders and their finished reports:
-- GE 1st, 2nd and 3rd stage nozzles: Jobs 20312, 20505, 20564, 20978, 20174, 18042
-- Siemens/Westinghouse and Alstom vanes: Jobs 19512, 20321, 20342
+**Then this job's values are filled in** (`src/lib/ingest/measurements.ts`), all confirmed against Job 20564:
+- **Received date:** from the 3A Incoming\Shipping folder name, e.g. "… 03-18-26" → 3/18/2026.
+- **Total area deviation and throat range:** from the area-check workbook (DS-0045 / 0337 / 0346 / 0388 / 0945) in 7A.
+- **Flow ranges (OD T/E, ID L/E):** from the incoming airflow workbook's "Range:" cells.
 
-All of these use the standard job-folder template (`3 Pictures\3A Incoming\…`, `7 Reports\7A…7E`, `9 Coating`). The section lists live in `src/lib/report-templates/` and the matching rules in `vn-rules.ts`.
+**Every other job-specific value** from the old report (counts like "Twenty one (21)", inch readings) is kept but wrapped in **[brackets]**, so it gets checked.
+
+**The Repair Summary is this job's own Repair Recommendations in the past tense**, line for line, exactly how Alfredo writes it. On his 20564 report, 17 of 17 lines match.
+
+**Fallback:** with no earlier report of the same product, the drafts come from the job's I&A and repair routers instead. Each narrative section shows where its draft came from, with **Start over from last report** and **Start over from router** buttons.
+
+## Report structure
+
+Section lists live in `src/lib/report-templates/` and the file-matching rules in `vn-rules.ts`. They follow Alfredo's 20564 decks.
 
 **Incoming Report:**
-1. Cover + component details
-2. Incoming Engineering Summary
-3. Repair Recommendations
-4. Then, each behind a divider page:
+1. Customer pages (before the cover)
+2. Cover + component details
+3. Incoming Engineering Summary
+4. Repair Recommendations
+5. Then, each behind a divider:
    - Serial Number List
    - Incoming Dimensional Sheets
    - Incoming NDT Reports
    - Incoming Photographs
-   - Heat Treat Chart
+   - Incoming Air Flow
+   - Heat Treat Charts
    - Metallurgical Sample Analysis
 
 **Repair Report:**
-1. Cover
-2. Incoming Engineering Summary (repeated)
-3. Serial Number List
-4. The incoming exhibit blocks again: dimensional sheets, NDT reports, photographs and met analysis
+1. Customer pages
+2. Cover + component details
+3. Incoming Engineering Summary
+4. Serial Number List
 5. Repair Summary
-6. Final Dimensional Sheets
-7. Final NDT Reports
-8. Final Photographs
-9. Air Flow Test
-10. Heat Treat Charts
-11. Coating Certification
+6. Then, each behind a divider:
+   - Final Dimensional Sheets
+   - Final NDT Report
+   - Final Photographs
+   - Air Flow Test
+   - Heat Treat Charts
+   - Coating Certification
 
-Any section can be dropped with the ✕ on its sidebar tab, or dragged to a new position.
+The incoming exhibit blocks are also available in the Repair Report. Some of his reports repeat them (Job 20505), others don't (Job 20564), so they start out left out and can be added back from the sidebar.
 
-## Where each section comes from
-
-- **Cover:** the folder name and `JOB TAG.xlsx`. Tech Rep comes from the I&A router's Pricing sheet, Turbine Model from DS-0404, and Material from the repair router. Edit or add fields on the cover tab.
-- **Incoming Engineering Summary:** a skeleton built from the I&A router.
-  - The opening paragraph and the list of inspections performed are filled in.
-  - There's one bullet per DS form the router calls for.
-  - Part-specific subsections are added: Retaining Ring for GE S1N, Packing for GE S2N/S3N.
-  - **Findings are `[bracketed]` placeholders for the tech rep to fill in.** They live on the hand-marked NDT reports, crack maps and DS sheets, and the app does not invent them.
-- **Repair Recommendations / Repair Summary:** the repair router's in-scope operations, in sequence.
-  - Material lines (type M), "No …" / "Not …" / "not selected" rows and internal checkpoints are dropped.
-  - Multi-sheet "PSM" routers are grouped under "Segment Repair / Packing Repair / Assembly Repair".
-  - The Repair Summary turns recognizable verbs into the past tense.
-- **Serial Number List:** parsed from DS-0404. Ditto marks, continuation rows and the retaining-ring block are handled. The completed DS-0404 PDF is embedded when it exists.
-- **Dimensional sheets, NDT reports, heat treat, airflow, coating cert:** every matching file is listed and the tech rep picks which go in.
-  - Tick or untick each file, reorder with the arrows, hover to preview, ✕ to reject a wrong match for good.
-  - The default order follows the order the job's routers list the DS forms.
-  - Incoming and final stages are told apart by folder (7A vs 7B) and, in 7D, by the INCOMING/FINAL prefix.
-- **Photos:** `3 Pictures`, preferring 3A Incoming for the I&A and 3C Final for the Repair Report. They print grouped by folder: "Shipping Photos", "NDT Photos (Cores And Covers)", "Incoming Photos (Hardware)", "Final Photos".
-
-## Open questions for the V&N team (Alfredo / Dalton)
-
-1. Should the Repair Report repeat the incoming exhibit blocks by default? Jobs 19512 and 20505 do; Job 20564 leaves them out.
-2. Cover fields: GE S1N reports use "Prior job #'s / Current total Hrs / Current Starts / Incoming # of boxes", while vanes and newer GE use "Prior Repair / Prior Hours / Prior Starts / Boxes". The app uses the second set. Change if wanted.
-3. Area check: should the app read the % deviation straight off the DS-0045 / 0346 / 0945 workbooks into the summary? At the moment it's a placeholder, because the incoming area sheets are usually only kept as PDFs.
-4. Heat Treat on the I&A: only "pre-weld" charts are ticked by default. Which 7C charts belong on the I&A?
-5. Are there exhibits that should be added: eddy current map (CDS-0014), flow test cert, customer "Repair Detail Summary" page (Job 20564)?
+Details:
+- **Cover fields:** his labels, including **Asset#** (read from the "EQ 10925569" in Calpine folder names) and a separate **Customer** on the details page (20564's cover says Zion Gas, the details page says Calpine). Blank standard fields stay in the PowerPoint so they can be filled in there.
+- **Photo slides:** titled by folder the way he titles them: Shipping Photos, NDT Photos (Segments / Ret. Ring / Cores & Covers / …), Final Photos. Shipping photos are capped at one slide (6) by default.
+- **Field-service copies:** "… FS.pdf" files beside the standard file are collapsed into it.
+- **Heat treat charts:** print in the order the cycles ran (by file date).
 
 ## Where job-review state lives
 
-Per-job edits, drafts and selections are saved to `%LOCALAPPDATA%\VNReportApp\jobs\<hash>.json`, keyed by the job folder's path. The Incoming and Repair reports share one job's state, so the summary, cover and exhibit picks carry over between them. Each report keeps its own page order. Nothing is written into the job folder except files a tech rep attaches manually (`_Manual Attachments\`). Excel-printed exhibits are cached in `%TEMP%\VNReportApp-rendered`.
+Per-job edits, drafts and selections are saved to `%LOCALAPPDATA%\VNReportApp\jobs\<hash>.json`, keyed by the job folder's path:
+- The Incoming and Repair reports share one job's state, so the summary, cover and exhibit picks carry over. Each report keeps its own page order.
+- Nothing is written into the job folder except files attached manually (`_Manual Attachments\`).
+- Excel-printed exhibits and deck exports are made under `%TEMP%`.

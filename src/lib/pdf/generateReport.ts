@@ -40,7 +40,7 @@ async function readFileWithRetry(sourcePath: string): Promise<Buffer> {
 /** Copies every page of a source PDF onto `doc`, in order. Used for every real completed form or
  * after-the-fact exhibit renderReportSegments interleaves as a "pdf" segment -- each one's pages
  * land exactly where our own table/placeholder would have gone, by construction. */
-async function appendPdfPages(doc: PDFDocument, sourcePath: string): Promise<void> {
+export async function appendPdfPages(doc: PDFDocument, sourcePath: string): Promise<void> {
   const bytes = await readFileWithRetry(sourcePath);
   // pdf-lib's load() rejects a Node Buffer outright ("provide binary data as Uint8Array, rather
   // than Buffer") despite Buffer being a Uint8Array subclass -- normalize explicitly.

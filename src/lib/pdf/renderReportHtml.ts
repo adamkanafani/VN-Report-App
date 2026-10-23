@@ -4,8 +4,9 @@ import sharp from "sharp";
 import type { JobScanResult, SectionScanResult } from "../ingest/scanJobFolder";
 import { COVER_FIELD_ORDER } from "../ingest/jobMetadata";
 import { applySectionOrder, sectionOrderFor, type JobState, type SectionState } from "../state/jobState";
-import { effectiveMultiSelection } from "../state/selection";
+import { effectiveMultiSelection, isExcluded } from "../state/selection";
 import { excelExhibitToPdf } from "./excelExhibit";
+import { groupPhotos, selectedPhotoPaths } from "./photoGroups";
 import { applyTableEdits, type ParsedTable } from "../ingest/parsers/types";
 
 // APG's real letterhead colors, sampled directly from a completed report (Job #20443): a short
@@ -166,49 +167,16 @@ async function photoToDataUri(absolutePath: string): Promise<string> {
   return `data:image/jpeg;base64,${buffer.toString("base64")}`;
 }
 
-/** Which photo slide a photo belongs on, from its folder -- mirrors how APG's real V&N reports
- * title their photo pages: "Shipping Photos" (3A Incoming\Shipping), "NDT Photos (<part>)"
- * (3A Incoming\NDT-1\<part>), "Incoming Photos (Hardware)", "Final Photos". The rank orders the
- * groups the same way the real reports do. */
-function photoGroup(folderPath: string): { label: string; rank: number } {
-  const parts = folderPath.split("/");
-  const after = (pattern: RegExp) => {
-    const i = parts.findIndex((p) => pattern.test(p));
-    return i !== -1 ? parts[i + 1] : undefined;
-  };
-  const tidy = (s: string) => s.replace(/^incoming\s+/i, "").toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase());
-  if (/shipping/i.test(folderPath)) return { label: /3c\s*final/i.test(folderPath) ? "Final Shipping Photos" : "Shipping Photos", rank: 0 };
-  const ndtPart = after(/^ndt/i);
-  if (ndtPart) return { label: `NDT Photos (${tidy(ndtPart)})`, rank: 1 };
-  if (/ndt/i.test(folderPath)) return { label: "NDT Photos", rank: 1 };
-  if (/hardware/i.test(folderPath)) return { label: "Incoming Photos (Hardware)", rank: 2 };
-  if (/3c\s*final/i.test(folderPath)) {
-    const sub = after(/^3c\s*final/i);
-    return { label: sub && !/^final$/i.test(sub) ? `Final Photos (${tidy(sub)})` : "Final Photos", rank: 3 };
-  }
-  return { label: `Photos (${tidy(parts[parts.length - 1] || "Other")})`, rank: 4 };
-}
-
 /** One page run per photo group (see photoGroup), each under its own letterhead title, photos in
  * the tech rep's selected order within a group. */
 async function renderPhotoPages(section: SectionScanResult, jobRoot: string, sectionState: SectionState | undefined, logo: string): Promise<string> {
-  const selectedPaths = sectionState?.selectedPhotoPaths;
-  const paths = selectedPaths && selectedPaths.length > 0 ? selectedPaths : section.matchedFiles.map((f) => f.relativePath);
+  const paths = selectedPhotoPaths(section, sectionState?.selectedPhotoPaths);
   if (paths.length === 0) return `<section class="report-page">${pageHeader(section.title, logo)}<p class="missing">No photos selected.</p></section>`;
 
-  const groups = new Map<string, { rank: number; paths: string[] }>();
-  for (const relativePath of paths) {
-    const folder = relativePath.includes("/") ? relativePath.slice(0, relativePath.lastIndexOf("/")) : "";
-    const { label, rank } = photoGroup(folder);
-    const g = groups.get(label) ?? { rank, paths: [] };
-    g.paths.push(relativePath);
-    groups.set(label, g);
-  }
-
   const pages: string[] = [];
-  for (const [label, group] of [...groups.entries()].sort((a, b) => a[1].rank - b[1].rank)) {
+  for (const { label, paths: group } of groupPhotos(paths)) {
     const images = await Promise.all(
-      group.paths.map(async (relativePath) => {
+      group.map(async (relativePath) => {
         try {
           return `<figure><img src="${await photoToDataUri(path.join(jobRoot, relativePath))}" /></figure>`;
         } catch {
@@ -365,18 +333,126 @@ ${bodyHtml}
 </html>`;
 }
 
-const REPAIR_LIST_SECTIONS = new Set(["repairRecommendations", "repairSummary"]);
+export const REPAIR_LIST_SECTIONS = new Set(["repairRecommendations", "repairSummary"]);
+
+/** The cover's two pages of label/value rows -- page 1 up to and including Tech Rep, the
+ * component-details page after it -- with the tech rep's overrides, custom fields and row order
+ * applied and blank rows dropped. Shared by the PDF cover and the PowerPoint cover slides. */
+/** "2026-10-23" (how the review screen stores it) → "10/23/2026", how his reports print dates. */
+function coverDate(raw: string): string {
+  const m = raw.split("T")[0].match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${Number(m[2])}/${Number(m[3])}/${m[1]}` : raw.split("T")[0];
+}
+
+export function coverPages(
+  scan: JobScanResult,
+  state: JobState,
+  options?: { keepBlankStandard?: boolean }
+): { page1: Array<{ label: string; value: string }>; page2: Array<{ label: string; value: string }> } {
+  const coverState = state.sections["cover"];
+  const coverOverrides = coverState?.fields ?? {};
+  const fixedCoverFields = new Map(
+    COVER_FIELD_ORDER.map(({ key, label }) => {
+      const raw = (coverOverrides[key as string] ?? (scan.metadata[key] as string) ?? "").toString();
+      const value = key === "date" ? coverDate(raw) : raw;
+      return [key as string, { label, value, standard: true }];
+    })
+  );
+  const customCoverFields = new Map((coverState?.customFields ?? []).map((f) => [f.id, { label: f.label, value: f.value, standard: false }]));
+  // Combined key order across both the fixed and custom fields, matching CoverEditor's own
+  // fieldOrder -- falls back to "every fixed field, then every custom field" for anything
+  // fieldOrder doesn't mention.
+  const allCoverKeys = [...fixedCoverFields.keys(), ...customCoverFields.keys()];
+  const placedKeys = (coverState?.fieldOrder ?? []).filter((k) => allCoverKeys.includes(k));
+  const coverKeyOrder = [...placedKeys, ...allCoverKeys.filter((k) => !placedKeys.includes(k))];
+  const ordered = coverKeyOrder
+    .map((key) => {
+      const f = fixedCoverFields.get(key) ?? customCoverFields.get(key);
+      return f ? { key, label: f.label, value: f.value, standard: f.standard } : undefined;
+    })
+    .filter((f): f is { key: string; label: string; value: string; standard: boolean } => Boolean(f))
+    // A blank field prints as a label with nothing after it -- drop it (the PowerPoint keeps blank
+    // standard rows, for filling in there; the asset # only when there is one).
+    .filter(({ key, label, value, standard }) => label.trim() !== "" && (value.trim() !== "" || (options?.keepBlankStandard && standard && key !== "assetNumber")));
+  // The cover always breaks to the component-details page right after Tech Rep (anchored to the
+  // field's key, so it holds if Tech Rep is dragged elsewhere); one page when Tech Rep is blank.
+  const techRepIndex = ordered.findIndex((f) => f.key === "techRep");
+  const strip = (fields: typeof ordered) => fields.map(({ label, value }) => ({ label, value }));
+  return techRepIndex === -1
+    ? { page1: strip(ordered), page2: [] }
+    : { page1: strip(ordered.slice(0, techRepIndex + 1)), page2: strip(ordered.slice(techRepIndex + 1)) };
+}
+
+/** Sections that go in the report, in the tech rep's order, minus left-out ones. */
+export function reportSections(scanIn: JobScanResult, state: JobState): SectionScanResult[] {
+  return applySectionOrder(scanIn.sections, sectionOrderFor(state, scanIn.reportType)).filter((s) => s.id !== "cover" && !isExcluded(s, state.sections[s.id]));
+}
+
+/** Whether a section has anything to print behind its divider -- the same rules as sectionExhibits,
+ * without opening any files (used to decide which divider slides the PowerPoint export gets). */
+export function hasExhibits(section: SectionScanResult, state: JobState): boolean {
+  const s = state.sections[section.id];
+  if (section.generation === "table-from-source") return (Boolean(section.printPdfFile) && !s?.excludePrintPdf) || Boolean(section.parsedTable?.rows.length);
+  if (section.generation === "attach-multi") return effectiveMultiSelection(section, s).length > 0;
+  if (section.generation === "attach-as-is") {
+    const file = (s?.selectedAttachmentPath && section.matchedFiles.find((f) => f.relativePath === s.selectedAttachmentPath)) || section.matchedFiles[0];
+    return Boolean(file && file.ext === ".pdf");
+  }
+  return false;
+}
+
+/** What prints behind a section's divider: the real completed forms / exhibits (PDF pages, or a
+ * spreadsheet printed through Excel), or -- for a table section with no print-ready PDF -- this
+ * app's own rendered table page. Empty when the section has nothing to show, in which case its
+ * divider is left out too. Shared by the plain PDF export and the build-from-PowerPoint export. */
+export async function sectionExhibits(section: SectionScanResult, scan: JobScanResult, state: JobState): Promise<{ segments: ReportSegment[]; skipped: string[] }> {
+  const id = section.id;
+  const segments: ReportSegment[] = [];
+  const skipped: string[] = [];
+
+  if (section.generation === "table-from-source") {
+    if (section.printPdfFile && !state.sections[id]?.excludePrintPdf) {
+      segments.push({ kind: "pdf", path: section.printPdfFile.absolutePath });
+    } else {
+      const editedTable = section.parsedTable ? applyTableEdits(section.parsedTable, state.sections[id]?.tableEdits) : undefined;
+      // A table section with nothing to show is left out entirely rather than printing an empty
+      // page; the review screen's omittedReason (page.tsx) mirrors this.
+      if (editedTable && editedTable.rows.length > 0) {
+        const logo = await logoDataUri();
+        const body = renderTable(editedTable, { notesText: state.sections[id]?.tableNotes });
+        segments.push({ kind: "html", html: wrapHtml(`<section class="table-section">${pageHeader(section.title, logo)}${body}</section>`) });
+      }
+    }
+  } else if (section.generation === "attach-multi") {
+    for (const file of effectiveMultiSelection(section, state.sections[id])) {
+      if (file.ext === ".pdf") {
+        segments.push({ kind: "pdf", path: file.absolutePath });
+        continue;
+      }
+      // Spreadsheet-only exhibit -- printed through Excel (see excelExhibitToPdf).
+      const printed = await excelExhibitToPdf(file.absolutePath, scan.metadata.jobNumber);
+      if (printed) segments.push({ kind: "pdf", path: printed });
+      else skipped.push(file.relativePath);
+    }
+  } else if (section.generation === "attach-as-is") {
+    // Tech rep's own pick overrides the auto-match (see SectionState.selectedAttachmentPath).
+    const selectedPath = state.sections[id]?.selectedAttachmentPath;
+    const file = (selectedPath && section.matchedFiles.find((f) => f.relativePath === selectedPath)) || section.matchedFiles[0];
+    if (file && file.ext === ".pdf") segments.push({ kind: "pdf", path: file.absolutePath });
+    // Matched something that isn't an embeddable PDF (a photo of a scan, say) -- surfaced as
+    // skipped rather than silently dropped.
+    else if (file) skipped.push(file.relativePath);
+  }
+  return { segments, skipped };
+}
 
 export async function renderReportSegments(scanIn: JobScanResult, state: JobState): Promise<RenderedReport> {
-  // Applies the tech rep's own sectionOrder here too (the same helper /api/scan/route.ts uses for
-  // the review sidebar) -- scanJobFolder itself only ever returns the template's own default
-  // order, so without this, a dragged section would move in the sidebar but not in the actual
-  // generated report.
-  const scan: JobScanResult = { ...scanIn, sections: applySectionOrder(scanIn.sections, sectionOrderFor(state, scanIn.reportType)) };
+  const scan: JobScanResult = { ...scanIn, sections: reportSections(scanIn, state) };
   const contentFor = (id: string) => state.sections[id]?.content;
   const logo = await logoDataUri();
 
   const segments: ReportSegment[] = [];
+  const skippedAttachments: string[] = [];
   let bodyParts: string[] = [];
   const flush = () => {
     if (bodyParts.length > 0) {
@@ -384,96 +460,41 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
       bodyParts = [];
     }
   };
+  const pushExhibits = (exhibits: { segments: ReportSegment[]; skipped: string[] }) => {
+    flush();
+    segments.push(...exhibits.segments);
+    skippedAttachments.push(...exhibits.skipped);
+  };
 
-  // Cover page: APG's usual incoming-report look — a large centered logo, the report title, and
-  // a left-aligned label/value list with no table borders (not a bordered grid).
-  const coverState = state.sections["cover"];
-  const coverOverrides = coverState?.fields ?? {};
-  const coverRowHtml = (label: string, value: string) =>
-    `<div class="cover-row"><span class="cover-label">${escapeHtml(label)}:</span><span class="cover-value">${escapeHtml(value)}</span></div>`;
-  const fixedCoverFields = new Map(
-    COVER_FIELD_ORDER.map(({ key, label }) => {
-      const raw = (coverOverrides[key as string] ?? (scan.metadata[key] as string) ?? "").toString();
-      const value = key === "date" ? raw.split("T")[0] : raw;
-      return [key as string, { label, value }];
-    })
-  );
-  const customCoverFields = new Map((coverState?.customFields ?? []).map((f) => [f.id, { label: f.label, value: f.value }]));
-  // Combined key order across both the fixed and custom fields, matching CoverEditor's own
-  // fieldOrder (see SectionState.fieldOrder's own comment) -- falls back to "every fixed field,
-  // then every custom field, each in their own default order" when a job's cover has never been
-  // reordered, or for any key fieldOrder doesn't mention (a custom field added after it was last
-  // saved, e.g.).
-  const allCoverKeys = [...fixedCoverFields.keys(), ...customCoverFields.keys()];
-  const placedKeys = (coverState?.fieldOrder ?? []).filter((k) => allCoverKeys.includes(k));
-  const coverKeyOrder = [...placedKeys, ...allCoverKeys.filter((k) => !placedKeys.includes(k))];
-  // One combined pass, fixed and custom fields interleaved in coverKeyOrder's own order -- doing
-  // fixed and custom as two separate filtered lists and concatenating them would always print
-  // every fixed field before every custom one, ignoring a custom field the tech rep moved up
-  // in between two fixed ones. label.trim() is always non-empty for a fixed field (it comes from
-  // COVER_FIELD_ORDER, never user-editable), so the same blank check works for both without
-  // needing a fixed/custom branch here.
-  const coverFieldsOrdered = coverKeyOrder
-    .map((key) => {
-      const f = fixedCoverFields.get(key) ?? customCoverFields.get(key);
-      return f ? { key, label: f.label, value: f.value } : undefined;
-    })
-    .filter((f): f is { key: string; label: string; value: string } => Boolean(f))
-    // A field left blank (or, for a custom field, half-filled-in) on the review screen prints as
-    // a label with nothing after it, which reads as a missing piece of the report -- drop it.
-    .filter(({ label, value }) => label.trim() !== "" && value.trim() !== "");
+  // Customer-supplied front pages (Calpine's Repair Detail Summary) go ahead of the cover.
+  for (const section of scan.sections.filter((s) => s.beforeCover)) pushExhibits(await sectionExhibits(section, scan, state));
 
-  // Per tech rep feedback, the cover always breaks into a fresh page immediately after "Tech
-  // Rep" -- not just when the field list happens to overflow -- so the split point stays
-  // consistent from job to job instead of drifting with however many custom fields got added.
-  // Anchored to the "Tech Rep" field's identity (its cover-metadata key) rather than a fixed
-  // index, so it still lands in the right place if a tech rep drags Tech Rep itself elsewhere in
-  // the cover's own field order. Falls back to a single page when Tech Rep is absent (filtered
-  // out blank, e.g.) rather than always forcing a mostly-empty second page.
-  const techRepIndex = coverFieldsOrdered.findIndex((f) => f.key === "techRep");
-  const coverPage1Fields = techRepIndex === -1 ? coverFieldsOrdered : coverFieldsOrdered.slice(0, techRepIndex + 1);
-  const coverPage2Fields = techRepIndex === -1 ? [] : coverFieldsOrdered.slice(techRepIndex + 1);
-  const coverRowsHtml = (fields: typeof coverFieldsOrdered) => fields.map(({ label, value }) => coverRowHtml(label, value)).join("");
-
+  // Cover page: APG's usual look — a large centered logo, the report title, and a left-aligned
+  // label/value list; the component-details rows on a second page.
+  const { page1, page2 } = coverPages(scan, state);
+  const coverRowsHtml = (fields: Array<{ label: string; value: string }>) =>
+    fields.map(({ label, value }) => `<div class="cover-row"><span class="cover-label">${escapeHtml(label)}:</span><span class="cover-value">${escapeHtml(value)}</span></div>`).join("");
   bodyParts.push(`
     <section class="cover">
       <img class="cover-logo" src="${logo}" alt="APG" />
       <h1>${escapeHtml(scan.reportType)}</h1>
-      <div class="cover-fields">${coverRowsHtml(coverPage1Fields)}</div>
+      <div class="cover-fields">${coverRowsHtml(page1)}</div>
     </section>`);
-  if (coverPage2Fields.length > 0) {
+  if (page2.length > 0) {
     bodyParts.push(`
       <section class="cover cover-continued report-page">
-        <div class="cover-fields">${coverRowsHtml(coverPage2Fields)}</div>
+        <div class="cover-fields">${coverRowsHtml(page2)}</div>
       </section>`);
   }
 
-  const skippedAttachments: string[] = [];
-
-  // Every remaining section, in scan.sections' own order -- reordered per sectionOrder just above
-  // -- dispatched by generation strategy rather than the old fixed
-  // narrativeSectionIds/tableSectionIds/INLINE_ATTACH_SECTIONS arrays
-  // plus generateReport.ts's separate end-of-document ATTACH_AS_IS_ORDER loop. Dragging a section
-  // in the sidebar now moves it in the generated report too -- previously deliberately NOT the
-  // case (see jobState.ts's sectionOrder comment) until a tech rep explicitly asked for it: "they
-  // arent moving the tabs around just because, they are purposefully changing the order." Cover
-  // is the one exception, always rendered first above regardless of its position in sectionOrder
-  // -- every real report opens with its title page.
+  // Every remaining section in the tech rep's order (dragging a section in the sidebar moves it in
+  // the report too), dispatched by generation strategy.
   for (const section of scan.sections) {
     const id = section.id;
-    if (id === "cover") continue;
-    // The tech rep's own "leave this page out" (the ✕ on its sidebar tab -- see
-    // SectionState.excludeFromReport).
-    if (state.sections[id]?.excludeFromReport) continue;
+    if (section.beforeCover) continue;
 
     if (section.generation === "llm-narrative") {
       const narrativeHtml = renderNarrative(contentFor(id));
-      // Recommended Repairs is just a numbered list of short step labels -- a full-width column
-      // wastes most of the page's width on short lines and pushes a routine ~15-25 step list onto
-      // a second or third page for no reason. Two CSS columns (see .repairs-columns) let text wrap
-      // within a narrower column instead, fitting far more steps per page while still reading
-      // naturally -- and still flows onto another page on its own if a job's list is genuinely too
-      // long, rather than forcing it to a fixed page count.
       // Repair Recommendations / Repair Summary are a lead-in line ("APG recommends the following
       // repairs:") over a long list of short step labels -- the lead-in stays full width, the list
       // flows into two columns (see .repairs-columns) so a routine 20-40 step list fits a page.
@@ -483,39 +504,8 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
         const [leadIn, ...rest] = (contentFor(id) ?? "").split("\n");
         body = leadIn?.trim().endsWith(":") ? `<p>${escapeHtml(leadIn.trim())}</p><div class="repairs-columns">${renderNarrative(rest.join("\n"))}</div>` : `<div class="repairs-columns">${narrativeHtml}</div>`;
       }
-      const sectionClass = [
-        "report-page",
-        "narrative-section",
-        isRepairList && "repairs-section",
-      ]
-        .filter(Boolean)
-        .join(" ");
+      const sectionClass = ["report-page", "narrative-section", isRepairList && "repairs-section"].filter(Boolean).join(" ");
       bodyParts.push(`<section class="${sectionClass}">${pageHeader(section.title, logo)}${body}</section>`);
-      continue;
-    }
-
-    if (section.generation === "table-from-source") {
-      if (section.printPdfFile && !state.sections[id]?.excludePrintPdf) {
-        if (section.divider) bodyParts.push(dividerPage(section.title, logo));
-        // A completed, print-ready PDF of this exact form exists (see PRINT_PDF_SECTIONS) --
-        // don't render our own table here at all. Flush whatever HTML has accumulated so far as
-        // its own segment, drop in the real PDF as its own segment, and keep building HTML after
-        // it -- the real form's pages land at exactly this point in the final document. Skipped
-        // when the tech rep has explicitly excluded it (see SectionState.excludePrintPdf), falling
-        // through to the re-rendered table below instead.
-        flush();
-        segments.push({ kind: "pdf", path: section.printPdfFile.absolutePath });
-        continue;
-      }
-      const editedTable = section.parsedTable ? applyTableEdits(section.parsedTable, state.sections[id]?.tableEdits) : undefined;
-      // A table section with nothing to show (no source file for it, or a table with zero rows --
-      // e.g. Wall Thickness/Dovetail on solid buckets, or a Scrap Report with nothing scrapped) is
-      // left out of the report entirely rather than printing an empty "No data available" page,
-      // per tech rep feedback. Applies to every table section; the review screen's own
-      // willBeOmitted check (page.tsx) mirrors this so the sidebar says so.
-      if (!editedTable || editedTable.rows.length === 0) continue;
-      const body = renderTable(editedTable, { notesText: state.sections[id]?.tableNotes });
-      bodyParts.push(`<section class="report-page table-section">${pageHeader(section.title, logo)}${body}</section>`);
       continue;
     }
 
@@ -525,45 +515,11 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
       continue;
     }
 
-    if (section.generation === "attach-multi") {
-      const files = effectiveMultiSelection(section, state.sections[id]);
-      if (files.length === 0) continue; // nothing ticked -- leave the whole block (divider too) out
-      if (section.divider) bodyParts.push(dividerPage(section.title, logo));
-      flush();
-      for (const file of files) {
-        if (file.ext === ".pdf") {
-          segments.push({ kind: "pdf", path: file.absolutePath });
-          continue;
-        }
-        // Spreadsheet-only exhibit -- printed through Excel (see excelExhibitToPdf).
-        const printed = await excelExhibitToPdf(file.absolutePath, scan.metadata.jobNumber);
-        if (printed) segments.push({ kind: "pdf", path: printed });
-        else skippedAttachments.push(file.relativePath);
-      }
-      continue;
-    }
-
-    if (section.generation === "attach-as-is") {
-      // Tech rep's own pick overrides the auto-match (see SectionState.selectedAttachmentPath).
-      // Every attach-as-is exhibit -- Final Report's charts/certs and I&A Report's Metallurgical
-      // Report/Chem Test/Crack Map alike -- now embeds inline at its position in scan.sections'
-      // order, rather than I&A's three being forced to the very end via a separate post-merge
-      // step (generateReport.ts's old ATTACH_AS_IS_ORDER): that grouping was itself just an
-      // artifact of matching a fixed template order, not a real constraint, so it's no longer
-      // correct now that order is meant to follow the tech rep's own drag-and-drop.
-      const selectedPath = state.sections[id]?.selectedAttachmentPath;
-      const file = (selectedPath && section.matchedFiles.find((f) => f.relativePath === selectedPath)) || section.matchedFiles[0];
-      if (file && file.ext === ".pdf") {
-        if (section.divider) bodyParts.push(dividerPage(section.title, logo));
-        flush();
-        segments.push({ kind: "pdf", path: file.absolutePath });
-      } else if (file) {
-        // Matched something, but it's not a PDF we can embed (e.g. a crack map saved as a photo
-        // instead of scanned to PDF) -- surface it as skipped rather than silently dropping it.
-        skippedAttachments.push(file.relativePath);
-      }
-      continue;
-    }
+    const exhibits = await sectionExhibits(section, scan, state);
+    skippedAttachments.push(...exhibits.skipped);
+    if (exhibits.segments.length === 0) continue; // nothing to show -- leave the whole block (divider too) out
+    if (section.divider) bodyParts.push(dividerPage(section.title, logo));
+    pushExhibits({ segments: exhibits.segments, skipped: [] });
   }
 
   flush();

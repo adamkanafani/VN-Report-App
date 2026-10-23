@@ -30,6 +30,10 @@ export interface SectionState {
    * "needs-attention" or "missing" — lets "Generate Report" proceed deliberately. */
   acknowledged?: boolean;
   lastGeneratedAt?: string;
+  /** For narrative sections: where the current draft's wording came from when it was started from
+   * a past report of the same product (see draft/priorReport.ts), e.g. "Job 19933 (19933 Emissions
+   * F7FA S1N IA Report.pptx)" -- shown above the editor so the tech rep knows what to check. */
+  seededFrom?: string;
   /** Set when automatic draft generation (on job-folder scan) couldn't produce content for this
    * section — missing source data, a missing API key, a failed request, etc. Surfaced in the UI
    * as an explicit "needs human review" flag instead of silently leaving the section blank.

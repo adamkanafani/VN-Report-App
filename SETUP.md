@@ -67,8 +67,11 @@ your saved progress lives outside this folder and is untouched.
 - **Your job folders** — the app just needs to be able to browse to
   wherever your job folders already live (network drive, OneDrive, etc.),
   same as you'd browse to them in File Explorer.
-- **Microsoft Excel** — if you have it installed, a couple of report
-  sections (Height Dim Form, Dovetail) can embed the real completed form
-  with its pictures instead of a plain data table, for jobs where that form
-  only ever existed as a spreadsheet. This is optional — the app works fine
-  without Excel, it just falls back to its own table for those cases.
+- **Microsoft PowerPoint** — the usual way to finish a report is "1. Download
+  PowerPoint", edit the deck, then "2. Build PDF from edited PowerPoint…",
+  which uses your installed PowerPoint to export the deck before adding the
+  forms. ("Quick PDF" works without PowerPoint.)
+- **Microsoft Excel** — some DS sheets / NDT forms only exist as Excel files
+  (no PDF print in the job folder). With Excel installed the app prints them
+  to PDF for you when the report is built; without it, they're listed as
+  skipped so you can print them yourself.

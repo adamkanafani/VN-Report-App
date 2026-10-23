@@ -1,7 +1,9 @@
 import type { ReportTemplate } from "./types";
 import {
+  CUSTOMER_PAGES_RULES,
   HEAT_TREAT_RULES,
   IA_ROUTER_RULES,
+  INCOMING_AIRFLOW_RULES,
   INCOMING_DIM_RULES,
   INCOMING_NDT_RULES,
   MET_REPORT_RULES,
@@ -10,11 +12,14 @@ import {
   SERIAL_LIST_RULES,
 } from "./vn-rules";
 
-// V&N "Incoming Report" (the I&A / Inspect & Advise deliverable). Section order matches APG's real
-// completed I&A reports -- Job 20312 (Emissions F7EA S1N) and Job 19512 (W501D5A R3V): cover +
-// component details, Incoming Engineering Summary, Repair Recommendations, then divider-led blocks
-// of appended exhibits (Serial Number List, dimensional sheets, NDT reports, photographs, heat
-// treat chart, metallurgical analysis).
+// V&N "Incoming Report" (the I&A / Inspect & Advise deliverable). Section order and titles match
+// Alfredo Resendiz's own I&A deck for Job 20564 (Calpine F7FA S1N) -- the same order his other ~90
+// GE nozzle I&A reports use: cover + component details, Incoming Engineering Summary, Repair
+// Recommendations, then divider slides each followed by their appended exhibits (Serial Number
+// List, Incoming Dimensional Sheets, Incoming NDT Reports, Incoming Photographs, Incoming Air Flow,
+// Heat Treat Charts, Metallurgical Sample Analysis). Section titles double as the divider slides'
+// text in the generated PowerPoint, and are how the final-PDF step finds where each block's
+// exhibits go -- keep them in step with what his decks say.
 //
 // This array's order is also the sidebar's default order and the generated report's default page
 // order; the tech rep can drag either to reorder (see JobState.sectionOrders).
@@ -27,6 +32,14 @@ export const iaReportTemplate: ReportTemplate = {
       sourceRules: [{ kind: "jobMetadata" }],
       generation: "template",
       automationConfidence: "high",
+    },
+    {
+      id: "customerPages",
+      title: "Customer Pages (before cover)",
+      sourceRules: CUSTOMER_PAGES_RULES,
+      generation: "attach-multi",
+      automationConfidence: "medium",
+      beforeCover: true,
     },
     {
       // Shared with the Repair Report, which repeats it verbatim -- one section id, so the tech
@@ -44,6 +57,7 @@ export const iaReportTemplate: ReportTemplate = {
       sourceRules: REPAIR_ROUTER_RULES,
       generation: "llm-narrative",
       automationConfidence: "high",
+      alwaysReview: true,
     },
     {
       id: "serialNumberList",
@@ -69,7 +83,7 @@ export const iaReportTemplate: ReportTemplate = {
       automationConfidence: "medium",
       // Vendor scanner output ("SFallbrook 26042915160.pdf") also lands in 7D -- listed, but
       // left unticked until someone confirms what it is.
-      preselectPattern: /incoming|crack|ut\b|red\s*dye|visual|fpi|vpi/i,
+      preselectPattern: /incoming|crack|ut\b|red\s*dye|visual|fpi|vpi|f-?306/i,
       divider: true,
     },
     {
@@ -82,10 +96,19 @@ export const iaReportTemplate: ReportTemplate = {
       divider: true,
     },
     {
+      id: "incomingAirflow",
+      title: "Incoming Air Flow",
+      sourceRules: INCOMING_AIRFLOW_RULES,
+      generation: "attach-multi",
+      automationConfidence: "high",
+      divider: true,
+    },
+    {
       id: "heatTreatCharts",
-      title: "Heat Treat Chart",
+      title: "Heat Treat Charts",
       sourceRules: HEAT_TREAT_RULES,
       generation: "attach-multi",
+      sortBy: "date",
       automationConfidence: "medium",
       // At I&A time only the pre-weld cycle has been run; later charts in 7C belong to the
       // Repair Report.

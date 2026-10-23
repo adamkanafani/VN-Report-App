@@ -51,8 +51,8 @@ export const SERIAL_LIST_RULES: SourceMatchRule[] = [
 
 /** Any DS-numbered data sheet print. DS-0404 is its own section; DS-0688 is the core/cover NDT
  * sign-off sheet, which belongs with the NDT reports. */
-const DS_SHEET = /(^|[^a-z])ds[\s-]?\d{3,4}|air\s*flow|flow\s*test/i;
-const NOT_DIMENSIONAL = /ds[\s-]?0404|ds[\s-]?0688|serial\s*number|crack|(ia|incoming|repair)\s*report|cert/i;
+const DS_SHEET = /(^|[^a-z])ds[\s-]?\d{3,4}/i;
+const NOT_DIMENSIONAL = /ds[\s-]?0404|ds[\s-]?0688|serial\s*number|crack|(ia|incoming|repair)\s*report|cert|air\s*flow/i;
 const IN_PROCESS_FOLDER = /pre[\s-]?coat|in[\s-]?process|post[\s-]?weld/i;
 
 export const INCOMING_DIM_RULES: SourceMatchRule[] = [
@@ -124,6 +124,30 @@ export const MET_REPORT_RULES: SourceMatchRule[] = [
     pattern: /report\s*\d{4}-\d{2,4}|\bAR\s+JN\b|met(allurgical)?.*(report|sample|analysis)/i,
     preferFolder: /7a|inspection report/i,
     requiredExtensions: [".pdf"],
+  },
+];
+
+/** Incoming flow test on flow-tested parts (F7FA S1N): "F7FA S1N Incoming Air Flow ID.pdf" / "OD"
+ * in 7A. Alfredo's I&A gives it its own "Incoming Air Flow" divider after the photographs (Job
+ * 20564), rather than mixing it into the dimensional sheets. */
+export const INCOMING_AIRFLOW_RULES: SourceMatchRule[] = [
+  {
+    kind: "filenamePattern",
+    pattern: /air\s*flow|flow\s*(test|incoming)/i,
+    excludePattern: /final/i,
+    folder: /7a|inspection report/i,
+    requiredExtensions: [".pdf", ".xlsx"],
+  },
+];
+
+/** Customer-supplied pages that go in front of the cover -- Calpine's "Repair Detail Summary"
+ * (asset #, unit, hours/starts) on Job 20564's I&A and Repair reports. */
+export const CUSTOMER_PAGES_RULES: SourceMatchRule[] = [
+  {
+    kind: "filenamePattern",
+    pattern: /repair\s*detail\s*summary|(^|[^a-z])rds([^a-z]|$)/i,
+    folder: /^7 reports/i,
+    requiredExtensions: [".pdf", ".xlsx"],
   },
 ];
 

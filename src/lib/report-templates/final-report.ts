@@ -1,6 +1,7 @@
 import type { ReportTemplate } from "./types";
 import {
   COATING_CERT_RULES,
+  CUSTOMER_PAGES_RULES,
   FINAL_AIRFLOW_RULES,
   FINAL_DIM_RULES,
   FINAL_NDT_RULES,
@@ -14,17 +15,19 @@ import {
   SERIAL_LIST_RULES,
 } from "./vn-rules";
 
-// V&N "Repair Report" (the Final / completion deliverable). Reverse-engineered from real completed
-// reports -- Jobs 19512 (W501D5A R3V), 20505 (Dow F7FA S2N) and 20564 (Calpine F7FA S1N). It
-// repeats the Incoming Engineering Summary verbatim, then (on two of the three) re-appends the
-// incoming exhibits, before the repair-stage content: Repair Summary, final dimensional sheets,
-// final NDT, final photographs, airflow (flow-tested parts only), heat treat charts, coating cert.
+// V&N "Repair Report" (the Final / completion deliverable). Order and titles match Alfredo
+// Resendiz's Repair Report deck for Job 20564 (Calpine F7FA S1N): cover + component details, the
+// Incoming Engineering Summary repeated verbatim, Serial Number List, Repair Summary, then divider
+// slides each followed by their exhibits -- Final Dimensional Sheets, Final NDT Report, Final
+// Photographs, Air Flow Test (flow-tested parts only), Heat Treat Charts, Coating Certification.
+//
+// Some of his Repair Reports (Job 20505) and Elmer Gomez's vane reports (Job 19512) also re-append
+// the incoming exhibit blocks; 20564's doesn't. Those blocks are kept here but start out left out
+// of the report (defaultExcluded) -- one click on the sidebar adds any of them back.
 //
 // Section ids shared with the Incoming Report (cover, engineeringSummary, serialNumberList, the
-// incoming exhibit blocks, metallurgicalReport) deliberately reuse the same saved state, so a tech
-// rep's edits/picks made on the I&A carry over instead of being redone. Any repeated incoming block
-// a given customer doesn't want can be dropped with the ✕ on its sidebar tab (Job 20564's report
-// leaves them all out).
+// incoming exhibit blocks, metallurgicalReport) deliberately reuse the same saved state, so edits
+// and picks made on the I&A carry over instead of being redone.
 export const finalReportTemplate: ReportTemplate = {
   reportType: "Repair Report",
   sections: [
@@ -34,6 +37,14 @@ export const finalReportTemplate: ReportTemplate = {
       sourceRules: [{ kind: "jobMetadata" }],
       generation: "template",
       automationConfidence: "high",
+    },
+    {
+      id: "customerPages",
+      title: "Customer Pages (before cover)",
+      sourceRules: CUSTOMER_PAGES_RULES,
+      generation: "attach-multi",
+      automationConfidence: "medium",
+      beforeCover: true,
     },
     {
       id: "engineeringSummary",
@@ -58,6 +69,7 @@ export const finalReportTemplate: ReportTemplate = {
       generation: "attach-multi",
       automationConfidence: "high",
       divider: true,
+      defaultExcluded: true,
     },
     {
       id: "incomingNdt",
@@ -65,8 +77,9 @@ export const finalReportTemplate: ReportTemplate = {
       sourceRules: INCOMING_NDT_RULES,
       generation: "attach-multi",
       automationConfidence: "medium",
-      preselectPattern: /incoming|crack|ut\b|red\s*dye|visual|fpi|vpi/i,
+      preselectPattern: /incoming|crack|ut\b|red\s*dye|visual|fpi|vpi|f-?306/i,
       divider: true,
+      defaultExcluded: true,
     },
     {
       id: "photoSet",
@@ -76,6 +89,7 @@ export const finalReportTemplate: ReportTemplate = {
       automationConfidence: "medium",
       alwaysReview: true,
       divider: true,
+      defaultExcluded: true,
     },
     {
       id: "metallurgicalReport",
@@ -84,8 +98,11 @@ export const finalReportTemplate: ReportTemplate = {
       generation: "attach-as-is",
       automationConfidence: "high",
       divider: true,
+      defaultExcluded: true,
     },
     {
+      // His Repair Summary is his own I&A Repair Recommendations put in the past tense, line for
+      // line (confirmed on Job 20564) -- see autoDraft.ts. Falls back to the repair router.
       id: "repairSummary",
       title: "Repair Summary",
       sourceRules: REPAIR_ROUTER_RULES,
@@ -104,7 +121,7 @@ export const finalReportTemplate: ReportTemplate = {
     },
     {
       id: "finalNdt",
-      title: "Final NDT Reports",
+      title: "Final NDT Report",
       sourceRules: FINAL_NDT_RULES,
       generation: "attach-multi",
       automationConfidence: "high",
@@ -133,6 +150,7 @@ export const finalReportTemplate: ReportTemplate = {
       title: "Heat Treat Charts",
       sourceRules: HEAT_TREAT_RULES,
       generation: "attach-multi",
+      sortBy: "date",
       automationConfidence: "high",
       divider: true,
     },

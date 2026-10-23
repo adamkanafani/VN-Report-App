@@ -1,8 +1,11 @@
 import path from "path";
+import { promises as fs } from "fs";
+import { toLongPath } from "../util/longPath";
 import type { AutomationConfidence, GenerationStrategy, ReportTemplate, SectionConfig } from "../report-templates/types";
 import { walkJobFolder, type JobFile } from "./fileWalk";
 import { findCandidates } from "./matchSource";
 import { resolveJobMetadata, type JobMetadata } from "./jobMetadata";
+import { readJobMeasurements, type JobMeasurements } from "./measurements";
 import { parseSerialNumberList } from "./parsers/serialNumberList";
 import { parseRouter, normalizeFormNumber, type ParsedRouter } from "./parsers/router";
 import { extractEmbeddedPhotos } from "./parsers/photoTemplatePdf";
@@ -39,14 +42,18 @@ export interface SectionScanResult {
    * SectionConfig.preselectPattern). The tech rep's own SectionState.selectedAttachmentPaths, once
    * saved, replaces this. */
   defaultSelectedPaths?: string[];
-  /** Copied from SectionConfig.divider for the renderer. */
+  /** Copied from SectionConfig for the renderer / review screen. */
   divider?: boolean;
+  beforeCover?: boolean;
+  defaultExcluded?: boolean;
 }
 
 export interface JobScanResult {
   jobRoot: string;
   reportType: string;
   metadata: JobMetadata;
+  /** Received date + area / throat / flow values read from this job's own sheets, for the drafts. */
+  measurements: JobMeasurements;
   fileCount: number;
   sections: SectionScanResult[];
 }
@@ -151,23 +158,32 @@ function formNumberOf(baseName: string): string | undefined {
  * routers list the forms (see RouterFormRef), which is the order APG's real reports print them in;
  * anything the routers don't mention follows by name.
  */
-function scanMultiSection(
+async function scanMultiSection(
   section: SectionConfig,
   files: JobFile[],
   base: Omit<SectionScanResult, "status" | "statusReason" | "matchedFiles">,
   formOrder: string[]
-): SectionScanResult {
+): Promise<SectionScanResult> {
   const matched = findCandidates(section.sourceRules, files).flatMap((m) => m.candidates);
   const manual = base.manualAttachments ?? [];
 
+  // Field-service duplicates ("DS-0319 ... INCOMING FS.pdf" beside "DS-0319 ... INCOMING.pdf", Job
+  // 20564) are the same sheet re-exported for a short customer copy of the report -- collapsed into
+  // the standard file, but kept when the FS copy is the only one (his F-306-01 final NDT).
+  const isFs = (f: JobFile) => /[\s_-]fs$/i.test(path.basename(f.baseName, f.ext).trim());
+  const stem = (f: JobFile) =>
+    path.basename(f.baseName, f.ext).toLowerCase().replace(/[\s_-]+fs$/, "").replace(/\s+/g, " ").trim();
   const seen = new Map<string, JobFile>();
   for (const f of [...manual, ...matched]) {
-    const key = f.baseName.toLowerCase();
+    const key = `${stem(f)}${f.ext}`;
     const existing = seen.get(key);
-    if (!existing || f.relativePath.length < existing.relativePath.length) seen.set(key, f);
+    const better =
+      !existing ||
+      (isFs(existing) && !isFs(f)) ||
+      (isFs(existing) === isFs(f) && f.relativePath.length < existing.relativePath.length);
+    if (better) seen.set(key, f);
   }
   const unique = [...seen.values()];
-  const stem = (f: JobFile) => path.basename(f.baseName, f.ext).toLowerCase().replace(/\s+/g, " ").trim();
   const pdfStems = new Set(unique.filter((f) => f.ext === ".pdf").map(stem));
   // A spreadsheet only counts when there's no PDF print of the same sheet anywhere in the section
   // (7A often has the PDFs loose and the working .xlsx copies tucked in a "New folder" below).
@@ -179,7 +195,17 @@ function scanMultiSection(
     const i = form ? formOrder.indexOf(form) : -1;
     return i === -1 ? Number.MAX_SAFE_INTEGER : i;
   };
-  candidates.sort((a, b) => rank(a) - rank(b) || a.baseName.localeCompare(b.baseName, undefined, { numeric: true }));
+  if (section.sortBy === "date") {
+    // Heat treat charts print in the order the cycles were run (Alfredo's 20564 Repair Report:
+    // preweld 4/15 → post weld 8/15 → post-coat 9/15 → post C&A 10/2) -- the files' own dates,
+    // since their names ("205642-001 POST C & A R# ...") don't sort that way.
+    const mtimes = new Map(
+      await Promise.all(candidates.map(async (f) => [f.relativePath, (await fs.stat(toLongPath(f.absolutePath)).catch(() => null))?.mtimeMs ?? 0] as const))
+    );
+    candidates.sort((a, b) => (mtimes.get(a.relativePath) ?? 0) - (mtimes.get(b.relativePath) ?? 0) || a.baseName.localeCompare(b.baseName, undefined, { numeric: true }));
+  } else {
+    candidates.sort((a, b) => rank(a) - rank(b) || a.baseName.localeCompare(b.baseName, undefined, { numeric: true }));
+  }
 
   const manualPaths = new Set(manual.map((f) => f.relativePath));
   let pool = candidates.filter((f) => !section.preselectPattern || section.preselectPattern.test(f.baseName));
@@ -218,9 +244,11 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
     // (see manualAttachmentsFor's own comment for the on-disk convention).
     manualAttachments: manualAttachmentsFor(section.id, files),
     divider: section.divider,
+    beforeCover: section.beforeCover,
+    defaultExcluded: section.defaultExcluded,
   };
 
-  if (section.generation === "attach-multi") return scanMultiSection(section, files, base, formOrder);
+  if (section.generation === "attach-multi") return await scanMultiSection(section, files, base, formOrder);
 
   if (section.generation === "llm-vision-select") {
     const folderRules = section.sourceRules.filter((r) => r.kind === "folderPattern");
@@ -501,5 +529,6 @@ export async function scanJobFolder(jobRoot: string, template: ReportTemplate): 
   // Preserve the template's declared section order in the result.
   const sections = template.sections.map((s) => resolved.get(s.id)!);
 
-  return { jobRoot, reportType: template.reportType, metadata, fileCount: files.length, sections };
+  const measurements = await readJobMeasurements(files);
+  return { jobRoot, reportType: template.reportType, metadata, measurements, fileCount: files.length, sections };
 }

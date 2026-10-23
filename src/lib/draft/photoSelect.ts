@@ -198,7 +198,12 @@ export async function selectBestPhotos(candidates: JobFile[], preferredStage: "i
   const uvFlags = await Promise.all(kept.map((f) => isUvLit(f.absolutePath)));
   const uvGroup = kept.filter((_, i) => uvFlags[i]).sort(byPriorityThenName);
   const normalGroup = kept.filter((_, i) => !uvFlags[i]).sort(byPriorityThenName);
-  const includedPaths = [...uvGroup, ...normalGroup].map((f) => f.relativePath);
+  // Shipping/receiving shots: one slide's worth (6) by default, like Alfredo's "Shipping Photos"
+  // page -- the rest stay one click away in the grid. Inspection photos are all kept.
+  let shippingKept = 0;
+  const includedPaths = [...uvGroup, ...normalGroup]
+    .filter((f) => !/shipping/i.test(f.folderPath) || ++shippingKept <= 6)
+    .map((f) => f.relativePath);
 
   return { includedPaths, excluded, raw };
 }

@@ -14,3 +14,10 @@ export function effectiveMultiSelection(
   const paths = sectionState?.selectedAttachmentPaths ?? section.defaultSelectedPaths ?? [];
   return paths.map((p) => byPath.get(p)).filter((f): f is JobFile => Boolean(f));
 }
+
+/** Whether a section is left out of the generated report: the tech rep's own choice (the ✕ on its
+ * sidebar tab) when they've made one, otherwise the template's default (SectionConfig.
+ * defaultExcluded -- e.g. the Repair Report's repeated incoming blocks). */
+export function isExcluded(section: { defaultExcluded?: boolean }, sectionState: Pick<SectionState, "excludeFromReport"> | undefined): boolean {
+  return sectionState?.excludeFromReport ?? Boolean(section.defaultExcluded);
+}
