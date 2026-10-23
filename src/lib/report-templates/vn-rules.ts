@@ -38,14 +38,15 @@ export const REPAIR_ROUTER_RULES: SourceMatchRule[] = [
 ];
 
 /** DS-0404 "Serial number recording sheet" -- always in 7A. Inspector-initial variants like
- * "(CJ)" / "(TH)" are the same form. */
+ * "(CJ)" / "(TH)" are the same form. Both the PDF print and the workbook match: the report uses
+ * the PDF, or prints the workbook through Excel when there's no PDF (see SectionConfig.selectOne). */
 export const SERIAL_LIST_RULES: SourceMatchRule[] = [
   {
     kind: "filenamePattern",
     pattern: /ds-?0404|serial\s*number\s*(recording|list)/i,
     excludePattern: /^copy of|final/i,
     preferFolder: /7a|inspection report/i,
-    requiredExtensions: [".xlsx"],
+    requiredExtensions: [".pdf", ".xlsx"],
   },
 ];
 

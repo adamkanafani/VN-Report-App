@@ -95,7 +95,14 @@ Section lists live in `src/lib/report-templates/` and the file-matching rules in
 
 The incoming exhibit blocks are also available in the Repair Report. Some of his reports repeat them (Job 20505), others don't (Job 20564), so they start out left out and can be added back from the sidebar.
 
+**Adding your own section.** "+ Add section" at the bottom of the sidebar adds a block with any title (e.g. "Eddy Current Map"):
+- Attach its file(s) in the section's panel. PDFs go in as-is; Excel files are printed through Excel.
+- It prints like every built-in block: its own divider page/slide, then the files.
+- It can be renamed, reordered, left out or deleted like any other section.
+- It's saved per job and per report type.
+
 Details:
+- **Serial Number List:** the real completed DS-0404 form, previewed in the review screen and embedded as-is behind its divider, the same as the other data sheets. The standard incoming PDF is picked by default; other copies (the working .xlsx, a field-service print) are listed one click away. A list that only exists as an Excel file is printed through Excel.
 - **Cover fields:** his labels, including **Asset#** (read from the "EQ 10925569" in Calpine folder names) and a separate **Customer** on the details page (20564's cover says Zion Gas, the details page says Calpine). Blank standard fields stay in the PowerPoint so they can be filled in there.
 - **Photo slides:** titled by folder the way he titles them: Shipping Photos, NDT Photos (Segments / Ret. Ring / Cores & Covers / …), Final Photos. Shipping photos are capped at one slide (6) by default.
 - **Field-service copies:** "… FS.pdf" files beside the standard file are collapsed into it.

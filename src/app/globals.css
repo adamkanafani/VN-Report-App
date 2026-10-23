@@ -1722,3 +1722,35 @@ button.generate-report:active:not(:disabled) {
   padding: 4px 10px;
   font-size: 12px;
 }
+
+/* "+ Add section" at the foot of the sidebar -- a tech-rep-added section (title + attached files),
+   printed like every other exhibit block. Dashed, so it reads as "add" rather than another tab. */
+.add-section-btn {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 10px;
+  padding: 10px 12px;
+  background: transparent;
+  color: #0b3d91;
+  border: 2px dashed #9db8df;
+  border-radius: 8px;
+  box-shadow: none;
+  font-weight: 700;
+}
+
+.add-section-btn:hover:not(:disabled) {
+  background: #eaf1fb;
+  color: #0b3d91;
+  box-shadow: none;
+}
+
+.custom-section-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.custom-section-actions button {
+  padding: 6px 12px;
+  font-size: 13px;
+}

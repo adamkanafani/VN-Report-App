@@ -6,7 +6,6 @@ import { walkJobFolder, type JobFile } from "./fileWalk";
 import { findCandidates } from "./matchSource";
 import { resolveJobMetadata, type JobMetadata } from "./jobMetadata";
 import { readJobMeasurements, type JobMeasurements } from "./measurements";
-import { parseSerialNumberList } from "./parsers/serialNumberList";
 import { parseRouter, normalizeFormNumber, type ParsedRouter } from "./parsers/router";
 import { extractEmbeddedPhotos } from "./parsers/photoTemplatePdf";
 import type { ParsedTable } from "./parsers/types";
@@ -46,6 +45,7 @@ export interface SectionScanResult {
   divider?: boolean;
   beforeCover?: boolean;
   defaultExcluded?: boolean;
+  custom?: boolean;
 }
 
 export interface JobScanResult {
@@ -59,7 +59,6 @@ export interface JobScanResult {
 }
 
 const TABLE_PARSERS: Record<string, (path: string) => Promise<ParsedTable | null>> = {
-  serialNumberList: parseSerialNumberList,
 };
 
 // Narrative sections drafted from a router workbook: the Incoming Engineering Summary from the I&A
@@ -77,7 +76,7 @@ const LIKELY_EXHIBIT_FOLDER = /7 reports|7a|reports|qa/i;
 
 /** These forms exist on disk twice: an .xlsx we parse for data and a completed, print-ready PDF of
  * the exact same form. The real V&N reports embed the DS-0404 print itself after its divider. */
-const PRINT_PDF_SECTIONS = new Set(["serialNumberList"]);
+const PRINT_PDF_SECTIONS = new Set<string>();
 
 // Shared with the /api/manual-attachment route, which is the only writer of this convention: a
 // file the tech rep manually attached (because the automatic file-matching found nothing, or
@@ -210,17 +209,35 @@ async function scanMultiSection(
   const manualPaths = new Set(manual.map((f) => f.relativePath));
   let pool = candidates.filter((f) => !section.preselectPattern || section.preselectPattern.test(f.baseName));
   if (section.preferPattern && pool.some((f) => section.preferPattern!.test(f.baseName))) pool = pool.filter((f) => section.preferPattern!.test(f.baseName));
-  const defaultSelectedPaths = candidates.filter((f) => manualPaths.has(f.relativePath) || pool.includes(f)).map((f) => f.relativePath);
+  let defaultSelectedPaths = candidates.filter((f) => manualPaths.has(f.relativePath) || pool.includes(f)).map((f) => f.relativePath);
+  if (section.selectOne && candidates.length > 0) {
+    // One form: a manually attached file wins outright; otherwise PDF over workbook, "INCOMING"
+    // over other copies, the report folder (7A) over subfolders, then the shortest path.
+    const score = (f: JobFile) =>
+      (manualPaths.has(f.relativePath) ? 0 : 1000) +
+      (f.ext === ".pdf" ? 0 : 100) +
+      (/incoming/i.test(f.baseName) ? 0 : 10) +
+      (/^7 reports\/7a[^/]*$/i.test(f.folderPath) ? 0 : 5) +
+      f.relativePath.length / 1000;
+    defaultSelectedPaths = [[...candidates].sort((a, b) => score(a) - score(b))[0].relativePath];
+  }
 
   if (candidates.length === 0) {
-    return { ...base, status: "missing", statusReason: "No matching files found in the job folder.", matchedFiles: [], defaultSelectedPaths: [] };
+    const statusReason = section.custom
+      ? "Add this section's file(s) below — PDFs go in as-is, Excel files are printed through Excel."
+      : "No matching files found in the job folder.";
+    return { ...base, status: "missing", statusReason, matchedFiles: [], defaultSelectedPaths: [] };
   }
-  const unselected = candidates.length - defaultSelectedPaths.length;
+  // A single-form section with its one form picked is done; extra copies sitting unticked
+  // (a working .xlsx, a field-service print) aren't something to chase.
+  const unselected = section.selectOne ? 0 : candidates.length - defaultSelectedPaths.length;
   return {
     ...base,
     status: unselected > 0 ? "needs-attention" : "ready",
     statusReason: [
-      `${candidates.length} file(s) found; ${defaultSelectedPaths.length} selected for the report.`,
+      section.selectOne
+        ? `Using "${defaultSelectedPaths[0]}"${candidates.length > 1 ? ` — ${candidates.length - 1} other cop${candidates.length > 2 ? "ies" : "y"} listed below if that's not the right one` : ""}.`
+        : `${candidates.length} file(s) found; ${defaultSelectedPaths.length} selected for the report.`,
       unselected > 0 ? `${unselected} left unticked — check whether they belong.` : "",
       excelOnly.length > 0 ? `${excelOnly.length} only exist as Excel files and will be printed through Excel when the report is generated.` : "",
     ]
@@ -246,6 +263,7 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
     divider: section.divider,
     beforeCover: section.beforeCover,
     defaultExcluded: section.defaultExcluded,
+    custom: section.custom,
   };
 
   if (section.generation === "attach-multi") return await scanMultiSection(section, files, base, formOrder);

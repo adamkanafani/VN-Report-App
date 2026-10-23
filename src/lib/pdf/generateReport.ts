@@ -1,7 +1,7 @@
 import { promises as fs } from "fs";
 import { PDFDocument } from "pdf-lib";
 import { scanJobFolder } from "../ingest/scanJobFolder";
-import { resolveReportTemplate } from "../report-templates";
+import { templateForJob } from "../report-templates/forJob";
 import { loadJobState } from "../state/jobState";
 import { renderReportSegments } from "./renderReportHtml";
 import { htmlToPdf } from "./htmlToPdf";
@@ -50,7 +50,7 @@ export async function appendPdfPages(doc: PDFDocument, sourcePath: string): Prom
 }
 
 export async function generateReportPdf(jobRoot: string, reportType?: string): Promise<{ buffer: Buffer; skippedAttachments: string[] }> {
-  const scan = await scanJobFolder(jobRoot, resolveReportTemplate(reportType));
+  const scan = await scanJobFolder(jobRoot, await templateForJob(jobRoot, reportType));
   const state = await loadJobState(jobRoot);
   const { segments, skippedAttachments } = await renderReportSegments(scan, state);
 

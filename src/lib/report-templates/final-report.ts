@@ -57,9 +57,12 @@ export const finalReportTemplate: ReportTemplate = {
     {
       id: "serialNumberList",
       title: "Serial Number List",
+      // The real completed DS-0404 form, embedded as-is like every other data sheet (Alfredo's
+      // reports print the DS-0404 itself behind the divider) -- not a re-typed table.
       sourceRules: SERIAL_LIST_RULES,
-      generation: "table-from-source",
+      generation: "attach-multi",
       automationConfidence: "high",
+      selectOne: true,
       divider: true,
     },
     {

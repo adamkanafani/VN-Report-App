@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { scanJobFolder } from "@/lib/ingest/scanJobFolder";
-import { resolveReportTemplate } from "@/lib/report-templates";
+import { templateForJob } from "@/lib/report-templates/forJob";
 import { updateSectionState, loadJobState } from "@/lib/state/jobState";
 import { reviseSection } from "@/lib/draft/narrative";
 import { engineeringSummaryDraft, priorDraftFor, repairRecommendationsDraft, repairSummaryDraft } from "@/lib/draft/autoDraft";
@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
   if (!jobRoot || !sectionId) return NextResponse.json({ error: "jobRoot and sectionId are required" }, { status: 400 });
 
   try {
-    const scanResult = await scanJobFolder(jobRoot, resolveReportTemplate(reportType));
+    const scanResult = await scanJobFolder(jobRoot, await templateForJob(jobRoot, reportType));
     const section = scanResult.sections.find((s) => s.id === sectionId);
     if (!section) return NextResponse.json({ error: `Unknown section ${sectionId}` }, { status: 404 });
 

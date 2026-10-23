@@ -60,6 +60,13 @@ export interface SectionConfig {
   /** For attach-multi sections: "date" prints the files oldest-first by their file date instead
    * of in router form order (heat treat charts, in the order the cycles ran). */
   sortBy?: "date";
+  /** For attach-multi sections that are one form, not a run of them (the Serial Number List): only
+   * the single best match starts out ticked -- the PDF print over the workbook, the standard copy
+   * over a field-service one, an "INCOMING" one over others. The rest stay one click away. */
+  selectOne?: boolean;
+  /** A section the tech rep added themselves (see JobState.customSections) -- a title of their
+   * choosing over files they attach by hand. */
+  custom?: boolean;
   /** Print a divider page (letterhead + the section title, large and centered) ahead of this
    * section's exhibits -- APG's V&N reports open every block of appended forms with one, since
    * the forms themselves carry no report-level heading. */

@@ -225,7 +225,7 @@ export async function resolveJobMetadata(jobRoot: string, files: JobFile[]): Pro
     }
   }
 
-  const serialList = findCandidates(SERIAL_LIST_RULES, files)[0]?.candidates[0];
+  const serialList = findCandidates(SERIAL_LIST_RULES, files)[0]?.candidates.find((f) => f.ext === ".xlsx");
   if (serialList && !metadata.turbineModel) {
     try {
       const frame = await readSerialListFrame(serialList.absolutePath);

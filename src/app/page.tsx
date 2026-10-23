@@ -321,6 +321,8 @@ function chunkRows<T>(rows: T[], numChunks: number): T[][] {
 // that tab (see scanJobFolder.ts's OPTIONAL_SUBSHEET_PARSERS handling of manualPdf) and embedded
 // outright, overriding whatever the xlsx tab itself parsed to.
 const MANUAL_ATTACHMENT_SECTIONS = new Set([
+  "customerPages",
+  "incomingAirflow",
   "serialNumberList",
   "incomingDimensional",
   "incomingNdt",
@@ -1112,13 +1114,18 @@ function MultiAttach({ jobRoot, section, onRefresh }: { jobRoot: string; section
     ...candidates.filter((f) => !selected.includes(f.relativePath)),
   ];
   const previewTarget = hovered ?? selected[0];
-  const upload = MANUAL_ATTACHMENT_SECTIONS.has(section.id) && (
+  // Every exhibit block takes hand-added files -- and a tech-rep-added section only has those.
+  const upload = (MANUAL_ATTACHMENT_SECTIONS.has(section.id) || section.custom) && (
     <ManualAttachmentUpload
       jobRoot={jobRoot}
       sectionId={section.id}
       manualAttachments={section.manualAttachments}
       onUploaded={onRefresh}
-      hint="Missing a sheet, or it lives somewhere else? Add it here — it's ticked automatically."
+      hint={
+        section.custom
+          ? "Add this section's file(s) here — each one is ticked automatically and prints after the section's divider page."
+          : "Missing a sheet, or it lives somewhere else? Add it here — it's ticked automatically."
+      }
     />
   );
 
@@ -1391,6 +1398,8 @@ function SectionPanel({
   onRefresh,
   onReviewed,
   onToggleExcluded,
+  onRenameCustom,
+  onDeleteCustom,
   patchSectionState,
   reportType,
 }: {
@@ -1401,6 +1410,9 @@ function SectionPanel({
   onRefresh: () => void;
   onReviewed: (acknowledged: boolean) => void;
   onToggleExcluded: (excluded: boolean) => void;
+  /** Tech-rep-added sections only (section.custom). */
+  onRenameCustom: (title: string) => void;
+  onDeleteCustom: () => void;
   patchSectionState: (sectionId: string, patch: Partial<SectionState>) => void;
 }) {
   const omitted = omittedReason(section);
@@ -1423,6 +1435,29 @@ function SectionPanel({
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
         <h2 style={{ margin: 0 }}>{section.title}</h2>
+        {section.custom && (
+          <span className="custom-section-actions">
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                const title = prompt("Section title (printed on its divider page / slide):", section.title);
+                if (title && title.trim()) onRenameCustom(title.trim());
+              }}
+            >
+              Rename
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                if (confirm(`Delete the "${section.title}" section from this report? Files you attached stay in the job folder's "_Manual Attachments" folder.`)) onDeleteCustom();
+              }}
+            >
+              Delete section
+            </button>
+          </span>
+        )}
         <button className={section.state.acknowledged ? "secondary" : ""} onClick={() => onReviewed(!section.state.acknowledged)}>
           {section.state.acknowledged ? "✓ Reviewed" : "Tech Rep Reviewed"}
         </button>
@@ -1644,6 +1679,53 @@ export default function Home() {
     }
   };
 
+  // A tech-rep-added section: a title of their choosing over files they attach by hand, printed
+  // like every other exhibit block (divider page / slide, then the files). Applied to `scan` right
+  // here rather than via a full rescan -- adding a section shouldn't cost a 30-second folder walk;
+  // the rescan happens anyway once a file is attached to it.
+  const customSectionAction = async (action: "add" | "rename" | "delete", id?: string, titleIn?: string) => {
+    if (!jobRoot || !scan) return;
+    let title = titleIn;
+    if (action === "add") {
+      title = prompt("New section title (printed on its divider page / slide), e.g. \"Eddy Current Map\":") ?? "";
+      if (!title.trim()) return;
+    }
+    try {
+      const res = await fetch("/api/custom-section", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobRoot, reportType, action, id, title }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      if (action === "add" && data.section) {
+        const added: SectionWithState = {
+          id: data.section.id,
+          title: data.section.title,
+          generation: "attach-multi",
+          automationConfidence: "high",
+          status: "missing",
+          statusReason: "Add this section's file(s) below — PDFs go in as-is, Excel files are printed through Excel.",
+          matchedFiles: [],
+          manualAttachments: [],
+          defaultSelectedPaths: [],
+          divider: true,
+          custom: true,
+          state: {},
+        };
+        setScan((prev) => (prev ? { ...prev, sections: [...prev.sections, added] } : prev));
+        setSelectedId(added.id);
+      } else if (action === "rename" && data.section) {
+        setScan((prev) => (prev ? { ...prev, sections: prev.sections.map((s) => (s.id === id ? { ...s, title: data.section.title } : s)) } : prev));
+      } else if (action === "delete") {
+        setScan((prev) => (prev ? { ...prev, sections: prev.sections.filter((s) => s.id !== id) } : prev));
+        setSelectedId((prev) => (prev === id ? (scan.sections[0]?.id ?? null) : prev));
+      }
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Couldn't update the section");
+    }
+  };
+
   // Quick PDF straight from the app, no PowerPoint step.
   const generateReport = async () => {
     if (!jobRoot) return;
@@ -1820,6 +1902,9 @@ export default function Home() {
                 )}
               </div>
             ))}
+            <button type="button" className="add-section-btn" onClick={() => customSectionAction("add")}>
+              + Add section
+            </button>
             <div className="sidebar-logo-spacer" aria-hidden="true">
               <img src="/apg-logo-transparent.png" alt="" className="sidebar-logo-img" />
             </div>
@@ -1833,6 +1918,8 @@ export default function Home() {
             onRefresh={() => runScan(jobRoot)}
             onReviewed={(acknowledged) => markReviewed(selectedSection.id, acknowledged)}
             onToggleExcluded={(excluded) => setExcludeFromReport(selectedSection.id, excluded)}
+            onRenameCustom={(title) => customSectionAction("rename", selectedSection.id, title)}
+            onDeleteCustom={() => customSectionAction("delete", selectedSection.id)}
             patchSectionState={patchSectionState}
             reportType={reportType}
           />

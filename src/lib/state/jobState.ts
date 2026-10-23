@@ -95,6 +95,10 @@ export interface JobState {
    * Incoming and Repair reports share one job's state (so shared sections carry over), but their
    * page orders are independent. sectionOrder above is only read as a fallback for old state. */
   sectionOrders?: Record<string, string[]>;
+  /** Sections the tech rep added to this job's report (keyed by ReportTemplate.reportType, like
+   * sectionOrders): an id ("custom-…", also the "_Manual Attachments" folder its files go in) and
+   * the title printed on its divider. See report-templates/forJob.ts. */
+  customSections?: Record<string, Array<{ id: string; title: string }>>;
 }
 
 /** Reorders `sections` per the tech rep's own sectionOrder (see JobState.sectionOrder's own
@@ -182,4 +186,15 @@ export async function updateSectionOrder(jobRoot: string, reportType: string, or
 /** This report type's saved section order (see JobState.sectionOrders). */
 export function sectionOrderFor(state: JobState, reportType: string): string[] | undefined {
   return state.sectionOrders?.[reportType] ?? state.sectionOrder;
+}
+
+export async function updateCustomSections(
+  jobRoot: string,
+  reportType: string,
+  update: (sections: Array<{ id: string; title: string }>) => Array<{ id: string; title: string }>
+): Promise<JobState> {
+  const state = await loadJobState(jobRoot);
+  state.customSections = { ...state.customSections, [reportType]: update(state.customSections?.[reportType] ?? []) };
+  await saveJobState(state);
+  return state;
 }

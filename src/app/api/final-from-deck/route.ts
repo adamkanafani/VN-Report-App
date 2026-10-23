@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { scanJobFolder } from "@/lib/ingest/scanJobFolder";
-import { resolveReportTemplate } from "@/lib/report-templates";
+import { templateForJob } from "@/lib/report-templates/forJob";
 import { loadJobState } from "@/lib/state/jobState";
 import { buildFinalPdfFromDeck } from "@/lib/pptx/finalFromDeck";
 
@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
   if (typeof jobRoot !== "string" || !jobRoot) return NextResponse.json({ error: "jobRoot is required" }, { status: 400 });
   if (!(file instanceof File) || !/\.pptx$/i.test(file.name)) return NextResponse.json({ error: "Choose the edited .pptx file." }, { status: 400 });
   try {
-    const scan = await scanJobFolder(jobRoot, resolveReportTemplate(typeof reportType === "string" ? reportType : undefined));
+    const scan = await scanJobFolder(jobRoot, await templateForJob(jobRoot, typeof reportType === "string" ? reportType : undefined));
     const state = await loadJobState(jobRoot);
     const result = await buildFinalPdfFromDeck(scan, state, Buffer.from(await file.arrayBuffer()));
     return new NextResponse(new Uint8Array(result.buffer), {
