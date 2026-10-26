@@ -1,6 +1,8 @@
 import path from "path";
 import type { JobScanResult } from "../ingest/scanJobFolder";
-import { loadJobState, updateSectionStates, type JobState, type SectionState } from "../state/jobState";
+import { loadJobState, saveJobState, updateSectionStates, type JobState, type SectionState } from "../state/jobState";
+import type { ReportTemplate } from "../report-templates/types";
+import { sectionForTitle, titleKey } from "../report-templates/titles";
 import {
   adaptPriorSummary,
   buildEngineeringSummaryDraft,
@@ -28,6 +30,73 @@ export function priorDraftFor(scan: JobScanResult): Promise<PriorDraft | null> {
     priorCache.set(scan.jobRoot, p);
   }
   return p;
+}
+
+// The same lookup for the Repair Report's own layout (its divider titles / optional blocks come from
+// the last same-product *Repair* Report deck, not the I&A one).
+const priorRepairCache = new Map<string, Promise<PriorDraft | null>>();
+function priorRepairDeckFor(scan: JobScanResult): Promise<PriorDraft | null> {
+  let p = priorRepairCache.get(scan.jobRoot);
+  if (!p) {
+    p = findPriorReport(scan.jobRoot, scan.metadata, "repair")
+      .then((prior) => (prior ? readPriorDraft(prior) : null))
+      .catch(() => null);
+    priorRepairCache.set(scan.jobRoot, p);
+  }
+  return p;
+}
+
+// Cover labels this app already has a field for (any author's wording) -- anything else on the last
+// report's cover ("WO#" on Adan Aguirre's NRG covers) is added as a blank custom row to fill in.
+const KNOWN_COVER_LABELS = new Set(
+  [
+    "customer", "customer po", "po", "unit", "unit #", "unit#", "part type", "apg job #", "apg job", "job", "date", "tech rep",
+    "turbine model", "component", "part numbers", "part number", "quantity", "qty", "material", "coating", "prior repair",
+    "prior repairs", "prior hours", "prior starts", "boxes", "current total hrs", "current starts", "incoming # of boxes",
+    "prior job #'s", "prior jobs", "asset#", "asset #", "asset", "eq#", "eq #", "eq",
+  ].map((l) => l.replace(/\s+/g, ""))
+);
+
+/**
+ * Once per job and report type: take the layout conventions of the last same-product report of the
+ * same type. Divider wording ("Flow Test", "Heat Treat Chart" -- see titles.ts), which optional
+ * blocks that author includes (Certifications, Heat Treat Certification, the Repair Report's
+ * repeated incoming blocks), "EQ#" vs "Asset#", and any extra cover rows ("WO#"). Vane and nozzle
+ * reports differ mostly in exactly these, by author -- confirmed across Elmer Gomez's and Adan
+ * Aguirre's vane decks (20381, 20387, 19820, 19714, 19886, 19608, 19168) vs Alfredo's 20564.
+ */
+async function seedLayout(scan: JobScanResult, template: ReportTemplate, prior: PriorDraft | null): Promise<void> {
+  const state = await loadJobState(scan.jobRoot);
+  const rt = template.reportType;
+  if (state.layoutSeeded?.[rt]) return;
+  state.layoutSeeded = { ...state.layoutSeeded, [rt]: prior ? `Job ${prior.source.jobNumber}` : "none" };
+  if (prior) {
+    const titles: Record<string, string> = { ...state.sectionTitles?.[rt] };
+    for (const divider of prior.dividers) {
+      const section = sectionForTitle(template.sections.filter((s) => s.divider), divider);
+      if (!section) continue;
+      if (titleKey(divider) !== titleKey(section.title) || divider !== section.title) titles[section.id] ??= divider;
+      // An optional block the last report included starts out included here too.
+      if (section.defaultExcluded && state.sections[section.id]?.excludeFromReport === undefined) {
+        state.sections[section.id] = { ...state.sections[section.id], excludeFromReport: false };
+      }
+    }
+    state.sectionTitles = { ...state.sectionTitles, [rt]: titles };
+
+    const cover = { ...state.sections.cover };
+    const eqLabel = prior.coverLabels.find((l) => /^(eq|asset)\s*#?$/i.test(l.trim()));
+    if (eqLabel && !cover.fieldLabels?.assetNumber) cover.fieldLabels = { ...cover.fieldLabels, assetNumber: eqLabel.replace(/\s+/g, "") };
+    const existing = new Set((cover.customFields ?? []).map((f) => f.label.toLowerCase().replace(/\s+/g, "")));
+    const extra = prior.coverLabels.filter((l) => {
+      const k = l.toLowerCase().replace(/\s+/g, "").replace(/:$/, "");
+      return !KNOWN_COVER_LABELS.has(k) && !existing.has(k);
+    });
+    if (extra.length > 0) {
+      cover.customFields = [...(cover.customFields ?? []), ...extra.map((label) => ({ id: `seed-${label.replace(/[^A-Za-z0-9]/g, "")}`, label, value: "" }))];
+    }
+    state.sections.cover = cover;
+  }
+  await saveJobState(state);
 }
 
 const seededLabel = (prior: PriorDraft) => `Job ${prior.source.jobNumber} (${path.basename(prior.source.file)})`;
@@ -85,8 +154,15 @@ export function repairSummaryDraft(scan: JobScanResult, state: JobState, prior: 
  * section a human has already touched (has content, a photo selection, or was acknowledged), so
  * re-running this on a rescan is safe. Patches are applied in one batched write.
  */
-export async function autoDraftJob(scan: JobScanResult): Promise<void> {
+export async function autoDraftJob(scan: JobScanResult, template: ReportTemplate): Promise<void> {
   const jobRoot = scan.jobRoot;
+  // Layout first (it's a separate state write, done once) -- the Repair Report learns from the last
+  // Repair Report deck, the I&A from the last I&A deck.
+  if (!(await loadJobState(jobRoot)).layoutSeeded?.[template.reportType]) {
+    const layoutPrior = /repair/i.test(template.reportType) ? await priorRepairDeckFor(scan) : await priorDraftFor(scan);
+    await seedLayout(scan, template, layoutPrior);
+  }
+
   const bySectionId = new Map(scan.sections.map((s) => [s.id, s]));
   const existingState = await loadJobState(jobRoot);
 

@@ -46,6 +46,7 @@ export interface SectionScanResult {
   beforeCover?: boolean;
   defaultExcluded?: boolean;
   custom?: boolean;
+  aliases?: string[];
 }
 
 export interface JobScanResult {
@@ -264,6 +265,7 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
     beforeCover: section.beforeCover,
     defaultExcluded: section.defaultExcluded,
     custom: section.custom,
+    aliases: section.aliases,
   };
 
   if (section.generation === "attach-multi") return await scanMultiSection(section, files, base, formOrder);

@@ -10,11 +10,12 @@ export async function POST(request: NextRequest) {
   if (!jobRoot) return NextResponse.json({ error: "jobRoot is required" }, { status: 400 });
 
   try {
-    const scanResult = await scanJobFolder(jobRoot, await templateForJob(jobRoot, body.reportType));
+    const template = await templateForJob(jobRoot, body.reportType);
+    const scanResult = await scanJobFolder(jobRoot, template);
     // Best-effort: builds the initial draft for every AI-assisted section right here, so the
     // tech rep lands on a completed draft to review rather than a page of "Generate" buttons.
     // Never throws — per-section failures are recorded as `draftError` on that section alone.
-    await autoDraftJob(scanResult);
+    await autoDraftJob(scanResult, template);
     const state = await loadJobState(jobRoot);
     // First time this job's ever been scanned: lock in today as the cover's "Date" -- the day
     // the tech rep actually started the report, not a date pulled from some source file (or left
@@ -75,7 +76,10 @@ export async function POST(request: NextRequest) {
         effectiveStatus !== status
           ? `${statusReason} A draft was still generated from the available job metadata — review it carefully, since the usual source data wasn't found.`
           : statusReason;
-      return { ...section, matchedFiles, status: effectiveStatus, statusReason: effectiveStatusReason, state: sectionState };
+      // Titles learned from the last same-product report on this very scan (see seedLayout) aren't in
+      // `template` yet -- the next scan reads them through templateForJob.
+      const title = state.sectionTitles?.[scanResult.reportType]?.[section.id] ?? section.title;
+      return { ...section, title, matchedFiles, status: effectiveStatus, statusReason: effectiveStatusReason, state: sectionState };
     });
 
     // Reorders both the sidebar and, via renderReportHtml.ts's renderReportSegments (which applies

@@ -26,6 +26,9 @@ export interface SectionState {
    * never touched, or a custom field added after this was last saved) render after everything
    * that is, in their own default order -- see CoverEditor/renderReportHtml's orderCoverRows. */
   fieldOrder?: string[];
+  /** For the cover section: label overrides for standard fields, keyed like JobMetadata -- e.g.
+   * "EQ#" for assetNumber on Elmer Gomez's Calpine vane reports where Alfredo writes "Asset#". */
+  fieldLabels?: Record<string, string>;
   /** True once a human has looked at this section and accepted it, even if status was
    * "needs-attention" or "missing" — lets "Generate Report" proceed deliberately. */
   acknowledged?: boolean;
@@ -99,6 +102,13 @@ export interface JobState {
    * sectionOrders): an id ("custom-…", also the "_Manual Attachments" folder its files go in) and
    * the title printed on its divider. See report-templates/forJob.ts. */
   customSections?: Record<string, Array<{ id: string; title: string }>>;
+  /** Section titles that differ from the template's (keyed by report type, then section id) --
+   * the author's own divider wording taken from the last same-product report ("Flow Test",
+   * "Heat Treat Chart"), or the tech rep's own rename. Printed on the divider page / slide. */
+  sectionTitles?: Record<string, Record<string, string>>;
+  /** Report types whose layout (titles, optional blocks, cover labels) has already been taken from
+   * the last same-product report -- done once per job, so later edits are never overwritten. */
+  layoutSeeded?: Record<string, string>;
 }
 
 /** Reorders `sections` per the tech rep's own sectionOrder (see JobState.sectionOrder's own

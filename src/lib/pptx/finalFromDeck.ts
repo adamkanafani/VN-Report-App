@@ -11,6 +11,7 @@ import { reportSections, sectionExhibits, type ReportSegment } from "../pdf/rend
 import { appendPdfPages } from "../pdf/generateReport";
 import { htmlToPdf } from "../pdf/htmlToPdf";
 import { readDeck } from "./readDeck";
+import { sectionForTitle } from "../report-templates/titles";
 
 const execFileAsync = promisify(execFile);
 
@@ -93,7 +94,7 @@ export async function buildFinalPdfFromDeck(scan: JobScanResult, state: JobState
 
     const sections = reportSections(scan, state);
     const exhibitSections = sections.filter((s) => s.generation !== "llm-narrative" && s.generation !== "llm-vision-select" && s.generation !== "template");
-    const byTitle = new Map(exhibitSections.filter((s) => !s.beforeCover).map((s) => [norm(s.title), s]));
+    const dividerSections = exhibitSections.filter((s) => !s.beforeCover);
     const used = new Set<string>();
     const skippedAttachments: string[] = [];
 
@@ -107,9 +108,10 @@ export async function buildFinalPdfFromDeck(scan: JobScanResult, state: JobState
     for (const [i, slide] of visible.entries()) {
       const [page] = await out.copyPages(deckPdf, [i]);
       out.addPage(page);
-      // A divider slide is one whose entire text is a section's title ("Incoming Dimensional
-      // Sheets", split over two lines or not).
-      const section = byTitle.get(norm(slide.text));
+      // A divider slide is one whose entire text is a section's title -- or another author's name
+      // for the same block ("Flow Test" for "Incoming Air Flow", "Heat Treat Chart" for "...Charts";
+      // see titles.ts) -- split over two lines or not.
+      const section = slide.pictures === 0 && slide.text.length <= 60 ? (dividerSections.find((s) => norm(s.title) === norm(slide.text)) ?? sectionForTitle(dividerSections, slide.text)) : undefined;
       if (!section || used.has(section.id)) continue;
       used.add(section.id);
       const ex = await sectionExhibits(section, scan, state);

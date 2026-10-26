@@ -1,7 +1,9 @@
 import type { ReportTemplate } from "./types";
 import {
   CUSTOMER_PAGES_RULES,
+  HEAT_TREAT_CERT_RULES,
   HEAT_TREAT_RULES,
+  IA_CERTIFICATION_RULES,
   IA_ROUTER_RULES,
   INCOMING_AIRFLOW_RULES,
   INCOMING_DIM_RULES,
@@ -62,6 +64,7 @@ export const iaReportTemplate: ReportTemplate = {
     {
       id: "serialNumberList",
       title: "Serial Number List",
+      aliases: ["Serial Numbers"],
       // The real completed DS-0404 form, embedded as-is like every other data sheet (Alfredo's
       // reports print the DS-0404 itself behind the divider) -- not a re-typed table.
       sourceRules: SERIAL_LIST_RULES,
@@ -73,6 +76,7 @@ export const iaReportTemplate: ReportTemplate = {
     {
       id: "incomingDimensional",
       title: "Incoming Dimensional Sheets",
+      aliases: ["Incoming Dimensions", "Incoming Dimensional"],
       sourceRules: INCOMING_DIM_RULES,
       generation: "attach-multi",
       automationConfidence: "high",
@@ -81,6 +85,7 @@ export const iaReportTemplate: ReportTemplate = {
     {
       id: "incomingNdt",
       title: "Incoming NDT Reports",
+      aliases: ["Incoming NDT", "Incoming NDT Report"],
       sourceRules: INCOMING_NDT_RULES,
       generation: "attach-multi",
       automationConfidence: "medium",
@@ -92,6 +97,7 @@ export const iaReportTemplate: ReportTemplate = {
     {
       id: "photoSet",
       title: "Incoming Photographs",
+      aliases: ["Incoming Photos", "Photographs"],
       sourceRules: PHOTO_RULES,
       generation: "llm-vision-select",
       automationConfidence: "medium",
@@ -101,6 +107,7 @@ export const iaReportTemplate: ReportTemplate = {
     {
       id: "incomingAirflow",
       title: "Incoming Air Flow",
+      aliases: ["Flow Test", "Air Flow Test", "Incoming Flow Test", "Incoming Airflow"],
       sourceRules: INCOMING_AIRFLOW_RULES,
       generation: "attach-multi",
       automationConfidence: "high",
@@ -109,22 +116,50 @@ export const iaReportTemplate: ReportTemplate = {
     {
       id: "heatTreatCharts",
       title: "Heat Treat Charts",
+      aliases: ["Heat Treat Chart"],
       sourceRules: HEAT_TREAT_RULES,
       generation: "attach-multi",
       sortBy: "date",
       automationConfidence: "medium",
-      // At I&A time only the pre-weld cycle has been run; later charts in 7C belong to the
-      // Repair Report.
-      preselectPattern: /pre[\s-]?weld/i,
+      // At I&A time only the pre-weld cycle has been run (pre-braze, "PRE-BZ", on vanes -- Job
+      // 20387); later charts in 7C belong to the Repair Report.
+      preselectPattern: /pre[\s-]?(weld|bz|braze)/i,
       divider: true,
+    },
+    {
+      // The heat treat vendor's own certification as a separate block (Elmer's W501F R3V, Job
+      // 20387). Off by default; switched on when the last same-product report had it.
+      id: "heatTreatCert",
+      title: "Heat Treat Certification",
+      aliases: ["Heat Treat Cert", "Heat Treat Certs"],
+      sourceRules: HEAT_TREAT_CERT_RULES,
+      generation: "attach-multi",
+      automationConfidence: "medium",
+      sortBy: "date",
+      divider: true,
+      defaultExcluded: true,
     },
     {
       id: "metallurgicalReport",
       title: "Metallurgical Sample Analysis",
+      aliases: ["Metallurgical Report", "Metallurgical Analysis"],
       sourceRules: MET_REPORT_RULES,
       generation: "attach-as-is",
       automationConfidence: "high",
       divider: true,
+    },
+    {
+      // Elmer Gomez's 501F vane reports print APG's own cert sheets ("Flow Test Cert for TMG",
+      // "Heat Treat Cert for TMG") as their own block (Jobs 20381, 19168); Alfredo's don't. Off by
+      // default -- switched on for a job when the last same-product report had it (autoDraft.ts).
+      id: "certifications",
+      title: "Certifications",
+      aliases: ["Certification", "Certs"],
+      sourceRules: IA_CERTIFICATION_RULES,
+      generation: "attach-multi",
+      automationConfidence: "medium",
+      divider: true,
+      defaultExcluded: true,
     },
   ],
 };

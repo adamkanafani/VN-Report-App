@@ -355,7 +355,8 @@ export function coverPages(
     COVER_FIELD_ORDER.map(({ key, label }) => {
       const raw = (coverOverrides[key as string] ?? (scan.metadata[key] as string) ?? "").toString();
       const value = key === "date" ? coverDate(raw) : raw;
-      return [key as string, { label, value, standard: true }];
+      // Author's own label where it differs ("EQ#" vs "Asset#") -- see SectionState.fieldLabels.
+      return [key as string, { label: coverState?.fieldLabels?.[key as string] ?? label, value, standard: true }];
     })
   );
   const customCoverFields = new Map((coverState?.customFields ?? []).map((f) => [f.id, { label: f.label, value: f.value, standard: false }]));

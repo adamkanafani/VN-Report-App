@@ -5,6 +5,8 @@ import {
   FINAL_AIRFLOW_RULES,
   FINAL_DIM_RULES,
   FINAL_NDT_RULES,
+  FINAL_CERTIFICATION_RULES,
+  HEAT_TREAT_CERT_RULES,
   HEAT_TREAT_RULES,
   IA_ROUTER_RULES,
   INCOMING_DIM_RULES,
@@ -57,6 +59,7 @@ export const finalReportTemplate: ReportTemplate = {
     {
       id: "serialNumberList",
       title: "Serial Number List",
+      aliases: ["Serial Numbers"],
       // The real completed DS-0404 form, embedded as-is like every other data sheet (Alfredo's
       // reports print the DS-0404 itself behind the divider) -- not a re-typed table.
       sourceRules: SERIAL_LIST_RULES,
@@ -68,6 +71,7 @@ export const finalReportTemplate: ReportTemplate = {
     {
       id: "incomingDimensional",
       title: "Incoming Dimensional Sheets",
+      aliases: ["Incoming Dimensions", "Incoming Dimensional"],
       sourceRules: INCOMING_DIM_RULES,
       generation: "attach-multi",
       automationConfidence: "high",
@@ -77,6 +81,7 @@ export const finalReportTemplate: ReportTemplate = {
     {
       id: "incomingNdt",
       title: "Incoming NDT Reports",
+      aliases: ["Incoming NDT", "Incoming NDT Report"],
       sourceRules: INCOMING_NDT_RULES,
       generation: "attach-multi",
       automationConfidence: "medium",
@@ -87,6 +92,7 @@ export const finalReportTemplate: ReportTemplate = {
     {
       id: "photoSet",
       title: "Incoming Photographs",
+      aliases: ["Incoming Photos", "Photographs"],
       sourceRules: PHOTO_RULES,
       generation: "llm-vision-select",
       automationConfidence: "medium",
@@ -97,6 +103,7 @@ export const finalReportTemplate: ReportTemplate = {
     {
       id: "metallurgicalReport",
       title: "Metallurgical Sample Analysis",
+      aliases: ["Metallurgical Report", "Metallurgical Analysis"],
       sourceRules: MET_REPORT_RULES,
       generation: "attach-as-is",
       automationConfidence: "high",
@@ -116,6 +123,7 @@ export const finalReportTemplate: ReportTemplate = {
     {
       id: "finalDimensional",
       title: "Final Dimensional Sheets",
+      aliases: ["Final Dimensions", "Final Dimensional"],
       sourceRules: FINAL_DIM_RULES,
       generation: "attach-multi",
       automationConfidence: "high",
@@ -125,6 +133,7 @@ export const finalReportTemplate: ReportTemplate = {
     {
       id: "finalNdt",
       title: "Final NDT Report",
+      aliases: ["Final NDT Reports", "Final NDT"],
       sourceRules: FINAL_NDT_RULES,
       generation: "attach-multi",
       automationConfidence: "high",
@@ -133,6 +142,7 @@ export const finalReportTemplate: ReportTemplate = {
     {
       id: "finalPhotoSet",
       title: "Final Photographs",
+      aliases: ["Final Photos"],
       sourceRules: PHOTO_RULES,
       generation: "llm-vision-select",
       automationConfidence: "medium",
@@ -140,9 +150,23 @@ export const finalReportTemplate: ReportTemplate = {
       divider: true,
     },
     {
+      // Elmer Gomez's 501F vane reports print APG's own cert sheets ("Flow Test Cert for TMG",
+      // "Heat Treat Cert for TMG") as their own block (Jobs 20381, 19168); Alfredo's don't. Off by
+      // default -- switched on for a job when the last same-product report had it (autoDraft.ts).
+      id: "finalCertifications",
+      title: "Certifications",
+      aliases: ["Certification", "Certs"],
+      sourceRules: FINAL_CERTIFICATION_RULES,
+      generation: "attach-multi",
+      automationConfidence: "medium",
+      divider: true,
+      defaultExcluded: true,
+    },
+    {
       // Flow-tested parts only (F7FA S1N in the jobs surveyed); simply absent on everything else.
       id: "finalAirflow",
       title: "Air Flow Test",
+      aliases: ["Flow Test", "Final Air Flow", "Final Flow Test"],
       sourceRules: FINAL_AIRFLOW_RULES,
       generation: "attach-multi",
       automationConfidence: "high",
@@ -151,6 +175,7 @@ export const finalReportTemplate: ReportTemplate = {
     {
       id: "finalHeatTreatCharts",
       title: "Heat Treat Charts",
+      aliases: ["Heat Treat Chart"],
       sourceRules: HEAT_TREAT_RULES,
       generation: "attach-multi",
       sortBy: "date",
@@ -158,8 +183,22 @@ export const finalReportTemplate: ReportTemplate = {
       divider: true,
     },
     {
+      // The heat treat vendor's own certification as a separate block (Elmer's W501F R3V, Job
+      // 20387). Off by default; switched on when the last same-product report had it.
+      id: "finalHeatTreatCert",
+      title: "Heat Treat Certification",
+      aliases: ["Heat Treat Cert", "Heat Treat Certs"],
+      sourceRules: HEAT_TREAT_CERT_RULES,
+      generation: "attach-multi",
+      automationConfidence: "medium",
+      sortBy: "date",
+      divider: true,
+      defaultExcluded: true,
+    },
+    {
       id: "coatingCertification",
       title: "Coating Certification",
+      aliases: ["Coating Cert"],
       sourceRules: COATING_CERT_RULES,
       generation: "attach-multi",
       automationConfidence: "high",

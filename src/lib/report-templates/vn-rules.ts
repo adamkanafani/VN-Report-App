@@ -161,6 +161,32 @@ export const FINAL_AIRFLOW_RULES: SourceMatchRule[] = [
   },
 ];
 
+/** APG's own certification sheets for the customer -- "Flow Test Cert for TMG.pdf", "Heat Treat
+ * Cert for TMG.pdf" -- which Elmer Gomez prints as a "Certifications" block (501F vane jobs 20381,
+ * 19168). In the report folder of the report being built (7A for the I&A, 7B for the Repair). */
+export const certificationRules = (folder: RegExp): SourceMatchRule[] => [
+  {
+    kind: "filenamePattern",
+    pattern: /cert(ification)?\s+for\b|flow\s*test\s*cert|heat\s*treat\s*cert/i,
+    excludePattern: /coat/i,
+    folder,
+    requiredExtensions: [".pdf", ".xlsx"],
+  },
+];
+export const IA_CERTIFICATION_RULES = certificationRules(/7a|inspection report/i);
+export const FINAL_CERTIFICATION_RULES = certificationRules(/7b|final report/i);
+
+/** The heat treat vendor's certification ("Certification-159589-1.pdf" in 7C) -- Elmer's W501F R3V
+ * reports give it its own "Heat Treat Certification" divider (Job 20387). */
+export const HEAT_TREAT_CERT_RULES: SourceMatchRule[] = [
+  {
+    kind: "filenamePattern",
+    pattern: /certification|_cert\.pdf$|\bcert\b/i,
+    folder: /(^|\/)7c\b|^7 reports\/[^/]*heat\s*treat/i,
+    requiredExtensions: [".pdf"],
+  },
+];
+
 export const COATING_CERT_RULES: SourceMatchRule[] = [
   {
     kind: "filenamePattern",

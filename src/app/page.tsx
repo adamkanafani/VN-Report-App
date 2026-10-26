@@ -1342,7 +1342,7 @@ function CoverEditor({
                 return (
                   <tr key={key} {...rowProps}>
                     {dragHandle}
-                    <th style={{ width: 170, textAlign: "left" }}>{fixed.uiLabel ?? fixed.label}</th>
+                    <th style={{ width: 170, textAlign: "left" }}>{fixed.uiLabel ?? section.state.fieldLabels?.[key] ?? fixed.label}</th>
                     <td>
                       <input
                         type="text"
@@ -1435,11 +1435,12 @@ function SectionPanel({
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
         <h2 style={{ margin: 0 }}>{section.title}</h2>
-        {section.custom && (
+        {(section.custom || section.divider) && (
           <span className="custom-section-actions">
             <button
               type="button"
               className="secondary"
+              title="Change the title printed on this section's divider page / slide"
               onClick={() => {
                 const title = prompt("Section title (printed on its divider page / slide):", section.title);
                 if (title && title.trim()) onRenameCustom(title.trim());
@@ -1447,6 +1448,7 @@ function SectionPanel({
             >
               Rename
             </button>
+            {section.custom && (
             <button
               type="button"
               className="secondary"
@@ -1456,6 +1458,7 @@ function SectionPanel({
             >
               Delete section
             </button>
+            )}
           </span>
         )}
         <button className={section.state.acknowledged ? "secondary" : ""} onClick={() => onReviewed(!section.state.acknowledged)}>
@@ -1683,7 +1686,7 @@ export default function Home() {
   // like every other exhibit block (divider page / slide, then the files). Applied to `scan` right
   // here rather than via a full rescan -- adding a section shouldn't cost a 30-second folder walk;
   // the rescan happens anyway once a file is attached to it.
-  const customSectionAction = async (action: "add" | "rename" | "delete", id?: string, titleIn?: string) => {
+  const customSectionAction = async (action: "add" | "rename" | "delete" | "retitle", id?: string, titleIn?: string) => {
     if (!jobRoot || !scan) return;
     let title = titleIn;
     if (action === "add") {
@@ -1715,7 +1718,7 @@ export default function Home() {
         };
         setScan((prev) => (prev ? { ...prev, sections: [...prev.sections, added] } : prev));
         setSelectedId(added.id);
-      } else if (action === "rename" && data.section) {
+      } else if ((action === "rename" || action === "retitle") && data.section) {
         setScan((prev) => (prev ? { ...prev, sections: prev.sections.map((s) => (s.id === id ? { ...s, title: data.section.title } : s)) } : prev));
       } else if (action === "delete") {
         setScan((prev) => (prev ? { ...prev, sections: prev.sections.filter((s) => s.id !== id) } : prev));
@@ -1918,7 +1921,7 @@ export default function Home() {
             onRefresh={() => runScan(jobRoot)}
             onReviewed={(acknowledged) => markReviewed(selectedSection.id, acknowledged)}
             onToggleExcluded={(excluded) => setExcludeFromReport(selectedSection.id, excluded)}
-            onRenameCustom={(title) => customSectionAction("rename", selectedSection.id, title)}
+            onRenameCustom={(title) => customSectionAction(selectedSection.custom ? "rename" : "retitle", selectedSection.id, title)}
             onDeleteCustom={() => customSectionAction("delete", selectedSection.id)}
             patchSectionState={patchSectionState}
             reportType={reportType}

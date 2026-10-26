@@ -82,9 +82,10 @@ const BLANK: Omit<JobMetadata, "jobNumber" | "customer" | "part" | "quantity" | 
 /** A turbine model/frame token as it appears in V&N job folder names: GE frames (F7EA, F7FA, 7FA,
  * F6B, F5LA, F7B), Siemens/Westinghouse (W501D5A, 501F, D5A, V84), Alstom (GT11D5, GT24). */
 const MODEL_TOKEN = /^(F?[5-9][A-Z]{1,3}(\.\d+)?|W?501[A-Z0-9]*|D5A?|V\d{2}(\.\d)?|GT\d{2}[A-Z0-9]*)$/i;
-/** Unit/plant designators that sit between the customer and the model ("ZN-GT2", "CT6", "DCT13",
- * "UNIT 73") -- pulled out into the cover's Unit field rather than left in the customer name. */
-const UNIT_TOKEN = /^((ZN-)?GT\d|D?CT\d+|U\d+)$/i;
+/** Unit/plant designators that sit between the customer and the model ("ZN-GT2", "SP-GTB",
+ * "HM-GT2", "CT6", "DCT13", "GBY-82", "BCT-03", "UNIT 73") -- pulled out into the cover's Unit field
+ * rather than left in the customer name. */
+const UNIT_TOKEN = /^(([A-Z]{1,3}-)?GT[\dA-Z]{1,2}|D?CT\d+|U\d+|[A-Z]{2,4}-\d{1,3})$/i;
 
 function titleCase(s: string): string {
   return s.toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase()).replace(/\b(\d+)(St|Nd|Rd|Th)\b/g, (_, n, suf) => n + suf.toLowerCase());
@@ -120,7 +121,11 @@ export function parseJobMetadataFromFolderName(jobRoot: string): JobMetadata {
   const [, jobNumber, description, , quantity = ""] = match;
   const assetNumber = folderName.match(/\bEQ\s*#?\s*(\d{5,})/i)?.[1] ?? "";
   const words = description.trim().split(/\s+/);
-  const modelIdx = words.findIndex((w) => MODEL_TOKEN.test(w));
+  let modelIdx = words.findIndex((w) => MODEL_TOKEN.test(w));
+  // "MHI 501F" (Mitsubishi-built 501F vanes) is a different part from Siemens' W501F -- keep the
+  // OEM prefix as part of the model so the two never get mixed up.
+  const mhi = modelIdx > 0 && /^MHI$/i.test(words[modelIdx - 1]);
+  if (mhi) modelIdx -= 1;
 
   let customerWords = modelIdx > 0 ? words.slice(0, modelIdx) : words.slice(0, 1);
   const unitParts: string[] = [];
@@ -138,17 +143,17 @@ export function parseJobMetadataFromFolderName(jobRoot: string): JobMetadata {
   });
 
   const partWords = modelIdx >= 0 ? words.slice(modelIdx) : words.slice(1);
-  const turbineModel = modelIdx >= 0 ? words[modelIdx].toUpperCase() : "";
+  const turbineModel = modelIdx < 0 ? "" : mhi ? `MHI ${words[modelIdx + 1].toUpperCase()}` : words[modelIdx].toUpperCase();
   return {
     jobNumber,
-    customer: titleCase(customerWords.join(" ")),
+    customer: reportCase(customerWords.join(" ").toUpperCase()),
     part: partWords.join(" ").toUpperCase(),
     quantity,
     ...BLANK,
     unit: unitParts.join(" ").toUpperCase(),
     assetNumber,
     turbineModel,
-    component: titleCase(partWords.slice(1).join(" ")),
+    component: titleCase(partWords.slice(mhi ? 2 : 1).join(" ")),
     sources: ["folder name"],
   };
 }

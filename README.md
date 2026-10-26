@@ -61,6 +61,19 @@ So for a new job the app finds the **most recent finished report deck of the sam
 
 **Fallback:** with no earlier report of the same product, the drafts come from the job's I&A and repair routers instead. Each narrative section shows where its draft came from, with **Start over from last report** and **Start over from router** buttons.
 
+## Vanes and nozzles, one app
+
+Vane reports (Elmer Gomez, Adan Aguirre) and nozzle reports (Alfredo Resendiz) share one format: the same deck layout, the same report order and the same exhibit blocks. Checked against Jobs 20381, 20387, 19820, 19714, 19886, 19608, 19168 and 20564.
+
+What differs is by author, so on a job's first scan of each report type the app copies these from the **last same-product report deck of that type** (`seedLayout` in `src/lib/draft/autoDraft.ts`):
+- **Divider wording**, e.g. "Flow Test" vs "Incoming Air Flow", "Heat Treat Chart" vs "Heat Treat Charts", "Incoming NDT Report" vs "Reports". Matching ignores wording (`src/lib/report-templates/titles.ts`), so any author's edited deck still lines up in the final PDF.
+- **Which optional blocks appear:** Certifications (APG's "… Cert for TMG" sheets), Heat Treat Certification, and the Repair Report's repeated incoming blocks.
+- **Cover conventions:** "EQ#" vs "Asset#", plus extra rows such as Adan's "WO#", added blank to fill in.
+
+Any section's title can also be changed with **Rename** in its panel.
+
+Product grouping uses model + stage/row. MHI 501F is kept apart from Siemens 501F, recognized from the folder or the deck name.
+
 ## Report structure
 
 Section lists live in `src/lib/report-templates/` and the file-matching rules in `vn-rules.ts`. They follow Alfredo's 20564 decks.

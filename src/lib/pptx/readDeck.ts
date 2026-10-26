@@ -24,6 +24,8 @@ export interface DeckSlide {
   number: number;
   /** Hidden slides are skipped by PowerPoint's PDF export, so they never become a page. */
   hidden: boolean;
+  /** Picture count -- photo slides have pictures, divider slides don't. */
+  pictures: number;
   shapes: DeckShape[];
   /** All the slide's text, whitespace-collapsed -- for matching divider titles. */
   text: string;
@@ -98,7 +100,8 @@ export async function readDeck(data: Buffer | Uint8Array): Promise<DeckSlide[]> 
       .join(" ")
       .replace(/\s+/g, " ")
       .trim();
-    slides.push({ number: i + 1, hidden, shapes, text });
+    const pictures = (xml.match(/<p:pic>/g) ?? []).length;
+    slides.push({ number: i + 1, hidden, pictures, shapes, text });
   }
   return slides;
 }

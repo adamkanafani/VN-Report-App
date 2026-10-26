@@ -67,6 +67,9 @@ export interface SectionConfig {
   /** A section the tech rep added themselves (see JobState.customSections) -- a title of their
    * choosing over files they attach by hand. */
   custom?: boolean;
+  /** Other names authors use for this block's divider ("Flow Test" for "Incoming Air Flow",
+   * "Heat Treat Chart" for "Heat Treat Charts", ...) -- see titles.ts. */
+  aliases?: string[];
   /** Print a divider page (letterhead + the section title, large and centered) ahead of this
    * section's exhibits -- APG's V&N reports open every block of appended forms with one, since
    * the forms themselves carry no report-level heading. */

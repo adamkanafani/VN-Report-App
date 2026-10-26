@@ -18,13 +18,15 @@ export interface ProductKey {
   kind: "nozzle" | "vane";
 }
 
-/** "F7EA" / "7EA" → "F7EA", "6B" → "F6B", "W501D5A" / "501D5" → "501D5", "MHI 501F" → "501F". */
+/** "F7EA" / "7EA" → "F7EA", "6B" → "F6B", "W501D5A" / "501D5" / "D5A" → "501D5", "W501F" → "501F",
+ * "MHI 501F" → "MHI501F" (Mitsubishi's 501F vanes are a different part from Siemens'). */
 function normalizeFamily(model: string): string {
   const m = model.toUpperCase().replace(/\s+/g, "");
   const ge = m.match(/^F?([3-9][A-Z]{1,3})/);
   if (ge) return `F${ge[1]}`;
-  const w = m.match(/^W?(501[A-Z]+\d?)/);
-  if (w) return w[1].replace(/A$/, "");
+  if (/^D5A?$/.test(m)) return "501D5";
+  const w = m.match(/^(MHI)?W?(501[A-Z]+\d?)/);
+  if (w) return `${w[1] ?? ""}${w[2].replace(/A$/, "")}`;
   return m;
 }
 
@@ -38,8 +40,12 @@ export function productKeyFor(metadata: Pick<JobMetadata, "turbineModel" | "part
   return { family: normalizeFamily(metadata.turbineModel), stage, kind };
 }
 
+/** Same product, ignoring the MHI marker -- which isn't always in the folder name (Job 19168's
+ * folder says "501F ROW 1 VANES"; only its deck, "19168 SP-GTA MHI R1V IA Report", says MHI), so
+ * MHI-ness is settled per deck in findPriorReport instead. */
+const baseFamily = (family: string) => family.replace(/^MHI/, "");
 function sameProduct(a: ProductKey, b: ProductKey): boolean {
-  return a.family === b.family && a.stage === b.stage && a.kind === b.kind;
+  return baseFamily(a.family) === baseFamily(b.family) && a.stage === b.stage && a.kind === b.kind;
 }
 
 // Listing every job folder under "Working Jobs" walks a couple hundred bucket folders on a network
@@ -108,6 +114,8 @@ export async function findPriorReport(jobRoot: string, metadata: JobMetadata, ki
     const dir = path.join(c.folder, REPORT_DIRS[kind]);
     const names = await fs.readdir(toLongPath(dir)).catch(() => [] as string[]);
     const deck = names.find((n) => /\.pptx$/i.test(n) && REPORT_NAME[kind].test(n) && !/^~\$|^copy of|[\s_-]fs\.pptx$|\brev\b|- copy/i.test(n));
+    // MHI vs Siemens 501F: the candidate is MHI when its folder or its deck says so.
+    if (deck && key.family.startsWith("MHI") !== (/\bmhi\b/i.test(c.name) || /\bmhi\b/i.test(deck))) continue;
     if (deck) return { jobNumber: c.meta.jobNumber, jobFolderName: c.name, file: path.join(dir, deck) };
   }
   return null;
@@ -121,6 +129,10 @@ export interface PriorDraft {
   repairSummary?: string;
   /** Cover / component-details label → value, e.g. "Tech Rep" → "Alfredo Resendiz T.". */
   coverFields: Record<string, string>;
+  /** Cover labels in order, including ones written with the value inline ("EQ# 11392387" → "EQ#"). */
+  coverLabels: string[];
+  /** Divider slide titles in deck order ("Serial Number List", "Flow Test", ...). */
+  dividers: string[];
 }
 
 const clean = (s: string) => s.replace(/\t+/g, " ").replace(/\s+/g, " ").trim();
@@ -147,7 +159,7 @@ function sectionMarkup(slides: DeckSlide[], title: RegExp): string | undefined {
       for (const p of shape.paragraphs) {
         const t = clean(p.text);
         if (!t) continue;
-        if (/(was|were) received|^apg (recommends|performed)/i.test(t)) {
+        if (/(was|were) received|^apg (recommends|performed)|^note:/i.test(t)) {
           if (lines.length > 0 && lines[lines.length - 1] !== "") lines.push("");
           lines.push(t);
           continue;
@@ -179,6 +191,30 @@ function coverFields(slides: DeckSlide[]): Record<string, string> {
   return fields;
 }
 
+/** Labels down the two cover slides, in order -- "Customer:<tab>…", or an inline "EQ# 11392387" /
+ * "WO# 4500…" with no colon. */
+function coverLabels(slides: DeckSlide[]): string[] {
+  const labels: string[] = [];
+  for (const slide of slides.slice(0, 2)) {
+    for (const shape of slide.shapes) {
+      for (const p of shape.paragraphs) {
+        const t = p.text.trim();
+        const m = t.match(/^([A-Za-z][A-Za-z #'/.]*?)\s*(:|	)/) ?? t.match(/^([A-Z]{2,4}#)\s*\S/);
+        if (m) labels.push(clean(m[1]).replace(/:$/, ""));
+      }
+    }
+  }
+  return labels;
+}
+
+/** Divider slides: no pictures, a single short line of text, not a cover / summary / list slide. */
+function dividerTitles(slides: DeckSlide[]): string[] {
+  return slides
+    .filter((s) => !s.hidden && s.pictures === 0 && s.shapes.length === 1 && s.text.length > 0 && s.text.length <= 60)
+    .map((s) => s.text)
+    .filter((t) => !/(incoming|repair)\s*report$|engineering summary|recommendation|repair summary/i.test(t));
+}
+
 export async function readPriorDraft(prior: PriorReport): Promise<PriorDraft> {
   const slides = await readDeck(await fs.readFile(toLongPath(prior.file)));
   return {
@@ -187,5 +223,7 @@ export async function readPriorDraft(prior: PriorReport): Promise<PriorDraft> {
     repairRecommendations: sectionMarkup(slides, /repair\s*recommendation/i),
     repairSummary: sectionMarkup(slides, /repair\s*summary/i),
     coverFields: coverFields(slides),
+    coverLabels: coverLabels(slides),
+    dividers: dividerTitles(slides),
   };
 }

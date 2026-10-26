@@ -24,6 +24,7 @@ export async function templateForJob(jobRoot: string, reportType: string | undef
   const template = resolveReportTemplate(reportType);
   const state = await loadJobState(jobRoot);
   const custom = state.customSections?.[template.reportType] ?? [];
-  if (custom.length === 0) return template;
-  return { ...template, sections: [...template.sections, ...custom.map(customSectionConfig)] };
+  const titles = state.sectionTitles?.[template.reportType] ?? {};
+  const sections = [...template.sections, ...custom.map(customSectionConfig)].map((s) => (titles[s.id] ? { ...s, title: titles[s.id] } : s));
+  return { ...template, sections };
 }

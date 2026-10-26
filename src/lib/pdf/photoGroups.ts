@@ -28,6 +28,8 @@ export function photoGroup(folderPath: string): { label: string; rank: number } 
   if (ndtPart) return { label: `NDT Photos (${partLabel(ndtPart)})`, rank: 1 };
   if (/ndt/i.test(folderPath)) return { label: "NDT Photos", rank: 1 };
   if (/hardware/i.test(folderPath)) return { label: "Incoming Photos (Hardware)", rank: 2 };
+  // Loose photos straight in "3 Pictures\3A Incoming" (no subfolder).
+  if (/3a\s*incoming$/i.test(folderPath)) return { label: "Incoming Photos", rank: 2 };
   if (/3c\s*final/i.test(folderPath)) {
     const sub = after(/^3c\s*final/i);
     return { label: sub && !/^final$/i.test(sub) ? `Final Photos (${partLabel(sub)})` : "Final Photos", rank: 3 };
