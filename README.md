@@ -72,6 +72,8 @@ What differs is by author, so on a job's first scan of each report type the app 
 
 Any section's title can also be changed with **Rename** in its panel.
 
+Inner support rings (Alfredo's) and GT11 vane carriers (Adan's and Elmer's; whole carriers and "Row N Vane Carrier Segments" kept apart) are their own products, so they draft only from earlier reports of the same kind. Pilot nozzles, combustor tile carriers, carrier heat shields and stator carrier rings are not included yet.
+
 Product grouping uses model + stage/row. MHI 501F is kept apart from Siemens 501F, recognized from the folder or the deck name.
 
 ## Report structure

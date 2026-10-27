@@ -121,7 +121,8 @@ export function buildEngineeringSummaryDraft(params: {
   lines.push(`- [Findings — see the attached Incoming NDT Reports${crackMapAvailable ? " and crack map" : ""}.]`);
   lines.push("");
 
-  if (!isVane && isGe && stage === 1) {
+  // (Not on an inner support ring job, whose part text also says "1st stage nozzle".)
+  if (!isVane && isGe && stage === 1 && !/support\s*ring/i.test(metadata.part)) {
     lines.push("Retaining Ring Inspection:");
     lines.push("- [Findings, or \"No significant defects noted.\"]");
     lines.push("");

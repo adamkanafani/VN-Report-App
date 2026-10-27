@@ -231,7 +231,20 @@ async function addPhotoSlides(pptx: Pptx, section: SectionScanResult, scan: JobS
 export function deckFileName(scan: JobScanResult): string {
   const m = scan.metadata;
   const key = productKeyFor(m);
-  const code = key?.stage ? (key.kind === "vane" ? `R${key.stage}V` : `S${key.stage}N`) : "";
+  // His file-name codes: "S1N" nozzles, "R3V" vanes, "INSR" inner support rings, "Vane Carrier" /
+  // "R1V Carrier Segments" carriers.
+  const code =
+    key?.kind === "support-ring"
+      ? "INSR"
+      : key?.kind === "vane-carrier"
+        ? key.stage
+          ? `R${key.stage}V Carrier Segments`
+          : "Vane Carrier"
+        : key?.stage
+          ? key.kind === "vane"
+            ? `R${key.stage}V`
+            : `S${key.stage}N`
+          : "";
   const customer = m.customer.replace(/\b([a-z])/gi, (c) => c.toUpperCase());
   const kind = /repair/i.test(scan.reportType) ? "Repair Report" : "IA Report";
   return [m.jobNumber, customer, m.turbineModel, code, kind].filter(Boolean).join(" ").replace(/[\\/:*?"<>|]+/g, "-") + ".pptx";

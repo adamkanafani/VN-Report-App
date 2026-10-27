@@ -15,7 +15,10 @@ import { toLongPath } from "../util/longPath";
 export interface ProductKey {
   family: string;
   stage: number | null;
-  kind: "nozzle" | "vane";
+  /** "support-ring" (inner support rings -- Alfredo's) and "vane-carrier" (GT11 vane carriers --
+   * Adan's and Elmer's) are their own products: drafted only from earlier reports of the same kind,
+   * never from nozzle or vane reports. */
+  kind: "nozzle" | "vane" | "support-ring" | "vane-carrier";
 }
 
 /** "F7EA" / "7EA" → "F7EA", "6B" → "F6B", "W501D5A" / "501D5" / "D5A" → "501D5", "W501F" → "501F",
@@ -32,9 +35,25 @@ function normalizeFamily(model: string): string {
 
 export function productKeyFor(metadata: Pick<JobMetadata, "turbineModel" | "part" | "component">): ProductKey | null {
   const text = `${metadata.part} ${metadata.component}`;
-  if (!metadata.turbineModel || /pilot|fuel|carrier|support\s*ring|parts?\s*sale/i.test(text)) return null;
-  const kind = /vane/i.test(text) ? "vane" : /nozzle/i.test(text) ? "nozzle" : null;
+  if (!metadata.turbineModel || /pilot|fuel|parts?\s*sale/i.test(text)) return null;
+  // Order matters: "1ST STAGE NOZZLE INNER SUPPORT RING" is a support ring, not a nozzle; "VANE
+  // CARRIER" (also misspelled "VAVE CARRIER", Job 18177) is a carrier, not vanes. Other carriers
+  // (combustor tile carriers, carrier heat shields, stator carrier rings) aren't V&N report parts.
+  const kind: ProductKey["kind"] | null = /support\s*ring/i.test(text)
+    ? "support-ring"
+    : /va[nv]e\s*carrier/i.test(text)
+      ? "vane-carrier"
+      : /carrier/i.test(text)
+        ? null
+        : /vane/i.test(text)
+          ? "vane"
+          : /nozzle/i.test(text)
+            ? "nozzle"
+            : null;
   if (!kind) return null;
+  // A support ring is always the 1st-stage ring -- its stage words don't distinguish anything. A
+  // carrier's row ("ROW 1 VANE CARRIER SEGMENTS") does; a whole carrier has none.
+  if (kind === "support-ring") return { family: normalizeFamily(metadata.turbineModel), stage: null, kind };
   const m = text.match(/\b(1st|first|row\s*1)\b|\b(2nd|second|row\s*2)\b|\b(3rd|third|row\s*3)\b|\b(4th|fourth|row\s*4)\b|\b(5th|row\s*5)\b/i);
   const stage = m ? [1, 2, 3, 4, 5].find((_, i) => m[i + 1]) ?? null : null;
   return { family: normalizeFamily(metadata.turbineModel), stage, kind };
