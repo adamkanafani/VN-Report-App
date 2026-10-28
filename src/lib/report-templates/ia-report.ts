@@ -85,7 +85,7 @@ export const iaReportTemplate: ReportTemplate = {
     {
       id: "incomingNdt",
       title: "Incoming NDT Reports",
-      aliases: ["Incoming NDT", "Incoming NDT Report"],
+      aliases: ["Incoming NDT", "Incoming NDT Report", "NDT Report"],
       sourceRules: INCOMING_NDT_RULES,
       generation: "attach-multi",
       automationConfidence: "medium",

@@ -124,7 +124,12 @@ export async function findPriorReport(jobRoot: string, metadata: JobMetadata, ki
     .filter((j) => j.meta.jobNumber && j.meta.jobNumber !== metadata.jobNumber)
     .filter((j) => {
       const k = productKeyFor(j.meta);
-      return k !== null && sameProduct(k, key);
+      if (k === null) return false;
+      // A picked support-ring example serves every model (Alfredo: 20062, an F7B ring) -- support
+      // ring reports have the same structure across F7B / F7EA / F7FA (checked 17366, 20062,
+      // 20097, 20855); only the most-recent fallback stays within the same model.
+      if (key.kind === "support-ring" && k.kind === "support-ring" && PREFERRED_EXAMPLE_JOBS.includes(j.meta.jobNumber)) return true;
+      return sameProduct(k, key);
     })
     // The tech reps' own picked examples first (see exemplars.ts), then earlier jobs (most recent
     // of those first), then later ones -- a later job number can still be the newest *finished*
