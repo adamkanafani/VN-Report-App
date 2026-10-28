@@ -3,6 +3,7 @@ import path from "path";
 import { parseJobMetadataFromFolderName, type JobMetadata } from "../ingest/jobMetadata";
 import { readDeck, slideTitle, type DeckSlide } from "../pptx/readDeck";
 import { toLongPath } from "../util/longPath";
+import { PREFERRED_EXAMPLE_JOBS } from "../report-templates/exemplars";
 
 // "Start from the last report for the same product." Across Alfredo Resendiz's ~90 GE nozzle
 // reports, 85–95% of each Repair Recommendations list is the same lines job to job for a given
@@ -106,6 +107,11 @@ const REPORT_NAME = { ia: /(ia|incoming)\s*report/i, repair: /repair\s*report/i 
 /** The most recent other job of the same product (by job number) that has a finished report deck
  * of the requested kind -- the standard deck, not the "-FS" field-service short version or a
  * "Copy of". Only looks inside the same "Working Jobs" tree the current job lives in. */
+function deckRank(name: string): number {
+  if (/\brev(ised)?\b/i.test(name)) return 0;
+  return /report\.pptx$/i.test(name) ? 1 : 2;
+}
+
 export async function findPriorReport(jobRoot: string, metadata: JobMetadata, kind: "ia" | "repair"): Promise<PriorReport | null> {
   const key = productKeyFor(metadata);
   if (!key) return null;
@@ -120,9 +126,12 @@ export async function findPriorReport(jobRoot: string, metadata: JobMetadata, ki
       const k = productKeyFor(j.meta);
       return k !== null && sameProduct(k, key);
     })
-    // Earlier jobs first (most recent of those first), then later ones -- a later job number can
-    // still be the newest *finished* report when this job is an old one being revisited.
+    // The tech reps' own picked examples first (see exemplars.ts), then earlier jobs (most recent
+    // of those first), then later ones -- a later job number can still be the newest *finished*
+    // report when this job is an old one being revisited.
     .sort((a, b) => {
+      const ap = PREFERRED_EXAMPLE_JOBS.includes(a.meta.jobNumber), bp = PREFERRED_EXAMPLE_JOBS.includes(b.meta.jobNumber);
+      if (ap !== bp) return ap ? -1 : 1;
       const an = Number(a.meta.jobNumber), bn = Number(b.meta.jobNumber);
       const aBefore = an < current, bBefore = bn < current;
       if (aBefore !== bBefore) return aBefore ? -1 : 1;
@@ -132,7 +141,12 @@ export async function findPriorReport(jobRoot: string, metadata: JobMetadata, ki
   for (const c of candidates.slice(0, 25)) {
     const dir = path.join(c.folder, REPORT_DIRS[kind]);
     const names = await fs.readdir(toLongPath(dir)).catch(() => [] as string[]);
-    const deck = names.find((n) => /\.pptx$/i.test(n) && REPORT_NAME[kind].test(n) && !/^~\$|^copy of|[\s_-]fs\.pptx$|\brev\b|- copy/i.test(n));
+    // The finished deck: not an Office lock file, a "Copy of"/"- Copy", or the "-FS" field-service
+    // short version. A "REV"/"REVISED" deck is the corrected one, so it wins; then a plain
+    // "... Report.pptx" over a variant like "... Report  hardware pictures.pptx" (Job 19163).
+    const deck = names
+      .filter((n) => /\.pptx$/i.test(n) && REPORT_NAME[kind].test(n) && !/^~\$|^copy of|[\s_-]fs\.pptx$|- copy/i.test(n))
+      .sort((a, b) => deckRank(a) - deckRank(b) || a.length - b.length)[0];
     // MHI vs Siemens 501F: the candidate is MHI when its folder or its deck says so.
     if (deck && key.family.startsWith("MHI") !== (/\bmhi\b/i.test(c.name) || /\bmhi\b/i.test(deck))) continue;
     if (deck) return { jobNumber: c.meta.jobNumber, jobFolderName: c.name, file: path.join(dir, deck) };
