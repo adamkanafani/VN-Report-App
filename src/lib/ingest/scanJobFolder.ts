@@ -210,6 +210,17 @@ async function scanMultiSection(
   const manualPaths = new Set(manual.map((f) => f.relativePath));
   let pool = candidates.filter((f) => !section.preselectPattern || section.preselectPattern.test(f.baseName));
   if (section.preferPattern && pool.some((f) => section.preferPattern!.test(f.baseName))) pool = pool.filter((f) => section.preferPattern!.test(f.baseName));
+  // A workbook of a DS form that's already here as a PDF is a working copy, not another sheet --
+  // e.g. 20564's "7A\20564 FA 1ST STG INCOMING\DS-0325 (CJ) ... INCOMING.xlsx" beside the printed
+  // "DS-0325 ... INCOMING.pdf" (the inspector's initials make the names differ). Listed, not ticked.
+  // Same for a data workbook whose prints are here under longer names -- "F7FA S1N Incoming Air
+  // Flow.xlsx" beside "... Air Flow ID.pdf" / "... Air Flow OD.pdf" (20564): the PDFs are what prints.
+  const pdfs = candidates.filter((f) => f.ext === ".pdf");
+  const pdfForms = new Set(pdfs.map((f) => formNumberOf(f.baseName)).filter(Boolean));
+  const isWorkingCopy = (f: JobFile) =>
+    f.ext !== ".pdf" && ((formNumberOf(f.baseName) !== undefined && pdfForms.has(formNumberOf(f.baseName))) || pdfs.some((p) => stem(p).startsWith(stem(f))));
+  const workingCopies = candidates.filter((f) => !manualPaths.has(f.relativePath) && isWorkingCopy(f));
+  pool = pool.filter((f) => !workingCopies.includes(f));
   let defaultSelectedPaths = candidates.filter((f) => manualPaths.has(f.relativePath) || pool.includes(f)).map((f) => f.relativePath);
   if (section.selectOne && candidates.length > 0) {
     // One form: a manually attached file wins outright; otherwise PDF over workbook, "INCOMING"
@@ -231,7 +242,9 @@ async function scanMultiSection(
   }
   // A single-form section with its one form picked is done; extra copies sitting unticked
   // (a working .xlsx, a field-service print) aren't something to chase.
-  const unselected = section.selectOne ? 0 : candidates.length - defaultSelectedPaths.length;
+  // Working copies left unticked aren't something to chase either -- only real unticked candidates.
+  const unselected = section.selectOne ? 0 : candidates.filter((f) => !defaultSelectedPaths.includes(f.relativePath) && !workingCopies.includes(f)).length;
+  const printedThroughExcel = excelOnly.filter((f) => defaultSelectedPaths.includes(f.relativePath)).length;
   return {
     ...base,
     status: unselected > 0 ? "needs-attention" : "ready",
@@ -239,8 +252,9 @@ async function scanMultiSection(
       section.selectOne
         ? `Using "${defaultSelectedPaths[0]}"${candidates.length > 1 ? ` — ${candidates.length - 1} other cop${candidates.length > 2 ? "ies" : "y"} listed below if that's not the right one` : ""}.`
         : `${candidates.length} file(s) found; ${defaultSelectedPaths.length} selected for the report.`,
+      !section.selectOne && workingCopies.length > 0 ? `${workingCopies.length} Excel working cop${workingCopies.length > 1 ? "ies" : "y"} of sheets already here as PDF left unticked.` : "",
       unselected > 0 ? `${unselected} left unticked — check whether they belong.` : "",
-      excelOnly.length > 0 ? `${excelOnly.length} only exist as Excel files and will be printed through Excel when the report is generated.` : "",
+      printedThroughExcel > 0 ? `${printedThroughExcel} only exist as Excel files and will be printed through Excel when the report is generated.` : "",
     ]
       .filter(Boolean)
       .join(" "),

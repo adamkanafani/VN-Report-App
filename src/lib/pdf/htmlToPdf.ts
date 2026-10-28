@@ -1,4 +1,4 @@
-import puppeteer from "puppeteer-core";
+import puppeteer, { type Browser } from "puppeteer-core";
 import { existsSync, promises as fs } from "fs";
 import os from "os";
 import path from "path";
@@ -18,27 +18,84 @@ function findBrowserExecutable(): string {
   return found;
 }
 
-export async function htmlToPdf(html: string): Promise<Buffer> {
-  // A fresh profile folder per render: with puppeteer's default, a headless Chrome left over from
-  // an earlier render (still shutting down, or orphaned by a crash) holds the profile lock and the
-  // next launch fails with "The browser is already running for ...puppeteer_dev_chrome_profile-*".
-  const userDataDir = await fs.mkdtemp(path.join(os.tmpdir(), "vnreport-chrome-"));
-  const browser = await puppeteer.launch({
-    executablePath: findBrowserExecutable(),
-    headless: true,
-    userDataDir,
-  });
+// Chrome 156 (10/27/2026 update) takes 1-3+ minutes to start a fresh headless profile on APG
+// machines -- first-run setup, component updates, background networking -- and the app used to start
+// one per rendered page, so a report with a dozen HTML pages timed out ("The browser is already
+// running for ...vnreport-chrome-*"). Now: one shared browser per server process, with those startup
+// chores switched off (≈2 s to start), reused for every page, and closed in the background after a
+// minute idle (closing can itself take 15-50 s, so nothing waits on it).
+const LAUNCH_ARGS = [
+  "--no-first-run",
+  "--no-default-browser-check",
+  "--disable-extensions",
+  "--disable-component-update",
+  "--disable-sync",
+  "--disable-background-networking",
+  "--disable-default-apps",
+];
+const IDLE_CLOSE_MS = 60_000;
+
+let browserPromise: Promise<Browser> | null = null;
+let idleTimer: NodeJS.Timeout | null = null;
+let inFlight = 0;
+
+async function launch(): Promise<Browser> {
+  // Full-length temp path (not the 8.3 "AKANAF~1" form os.tmpdir() returns), one profile per server
+  // process -- reused across reports, never shared with a Chrome left over from an earlier run.
+  const base = await fs.realpath(os.tmpdir()).catch(() => os.tmpdir());
+  const options = { executablePath: findBrowserExecutable(), headless: true, args: LAUNCH_ARGS, timeout: 120_000 };
   try {
-    const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "load" });
-    const pdfBuffer = await page.pdf({
-      format: "letter",
-      printBackground: true,
-      margin: { top: "0.5in", bottom: "0.5in", left: "0.5in", right: "0.5in" },
+    return await puppeteer.launch({ ...options, userDataDir: path.join(base, `vnreport-chrome-${process.pid}`) });
+  } catch {
+    // That profile is somehow still held -- fall back to a brand-new one.
+    return puppeteer.launch({ ...options, userDataDir: await fs.mkdtemp(path.join(base, "vnreport-chrome-")) });
+  }
+}
+
+function getBrowser(): Promise<Browser> {
+  if (!browserPromise) {
+    browserPromise = launch().then((browser) => {
+      browser.on("disconnected", () => {
+        browserPromise = null;
+      });
+      return browser;
     });
-    return Buffer.from(pdfBuffer);
+    browserPromise.catch(() => {
+      browserPromise = null;
+    });
+  }
+  return browserPromise;
+}
+
+function scheduleIdleClose() {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    if (inFlight > 0 || !browserPromise) return;
+    const closing = browserPromise;
+    browserPromise = null;
+    closing.then((b) => b.close()).catch(() => {});
+  }, IDLE_CLOSE_MS);
+}
+
+export async function htmlToPdf(html: string): Promise<Buffer> {
+  inFlight++;
+  if (idleTimer) clearTimeout(idleTimer);
+  try {
+    const browser = await getBrowser();
+    const page = await browser.newPage();
+    try {
+      await page.setContent(html, { waitUntil: "load" });
+      const pdfBuffer = await page.pdf({
+        format: "letter",
+        printBackground: true,
+        margin: { top: "0.5in", bottom: "0.5in", left: "0.5in", right: "0.5in" },
+      });
+      return Buffer.from(pdfBuffer);
+    } finally {
+      await page.close().catch(() => {});
+    }
   } finally {
-    await browser.close();
-    await fs.rm(userDataDir, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
+    inFlight--;
+    scheduleIdleClose();
   }
 }

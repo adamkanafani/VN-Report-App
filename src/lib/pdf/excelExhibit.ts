@@ -1,8 +1,10 @@
 import crypto from "crypto";
+import { promises as fs } from "fs";
 import os from "os";
 import path from "path";
 import { loadWorkbook, cellText } from "../ingest/excel";
 import { renderXlsxSheetToPdf } from "../ingest/parsers/xlsxToPdf";
+import { toLongPath } from "../util/longPath";
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -41,5 +43,22 @@ async function pickSheet(xlsxPath: string, jobNumber: string): Promise<string | 
 export async function excelExhibitToPdf(xlsxPath: string, jobNumber: string): Promise<string | null> {
   const sheet = await pickSheet(xlsxPath, jobNumber);
   const cacheDir = path.join(os.tmpdir(), "VNReportApp-rendered", crypto.createHash("sha256").update(xlsxPath).digest("hex").slice(0, 16));
-  return renderXlsxSheetToPdf(xlsxPath, sheet ? new RegExp(`^${escapeRegExp(sheet)}$`) : /.^/, cacheDir);
+  // Excel can't open a workbook whose full path is over 218 characters ("Unable to get the Open
+  // property of the Workbooks class") -- and job folder paths routinely are, on T: and even more so
+  // in a OneDrive copy. So Excel always opens a short-path copy in the cache folder, refreshed
+  // whenever the original changes (its timestamp is carried over, which keeps the PDF cache valid).
+  let source: string;
+  try {
+    await fs.mkdir(cacheDir, { recursive: true });
+    const original = await fs.stat(toLongPath(xlsxPath));
+    source = path.join(cacheDir, `source${path.extname(xlsxPath)}`);
+    const copy = await fs.stat(source).catch(() => null);
+    if (!copy || Math.abs(copy.mtimeMs - original.mtimeMs) > 1000) {
+      await fs.copyFile(toLongPath(xlsxPath), source);
+      await fs.utimes(source, original.atime, original.mtime);
+    }
+  } catch {
+    return null;
+  }
+  return renderXlsxSheetToPdf(source, sheet ? new RegExp(`^${escapeRegExp(sheet)}$`) : /.^/, cacheDir);
 }

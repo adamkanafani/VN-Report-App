@@ -117,6 +117,100 @@ function AppWordmark() {
   );
 }
 
+// Rotating one-liners under "Generating report…" while an export runs (anywhere from a few seconds
+// to a few minutes on a big job) -- the first line of each list says plainly what's happening; the
+// rest keep it from feeling stuck. Shop-floor themed on purpose: nozzles, vanes, heat treat, DS sheets.
+const GENERATING_QUIPS: Record<"pdf" | "deck" | "final", string[]> = {
+  pdf: [
+    "Assembling every section and exhibit into the final PDF.",
+    "Lining up the DS sheets in router order…",
+    "Checking butt gaps on the page breaks…",
+    "Heat-treating the charts. Preweld cycle first, naturally.",
+    "Flow-testing the margins — all within APG criteria.",
+    "Blasting off the residual whitespace with 80–120 grit…",
+    "Re-assembling the nozzle. The PDF one.",
+    "Running a final VPI on the page numbers…",
+    "Torquing the cover page to spec…",
+  ],
+  deck: [
+    "Laying out the cover, summary, repairs, dividers and photo slides.",
+    "Placing six photos per slide, like Alfredo does…",
+    "Measuring the 7pt APG-blue rule twice, drawing it once…",
+    "Asking the segments to hold still for their photos…",
+    "Centering the divider titles at 40pt bold…",
+    "Weld-building the Engineering Summary to nominal…",
+    "Assembling the slides in the fixture…",
+  ],
+  final: [
+    "Exporting your deck through PowerPoint — a few minutes on a big job.",
+    "Slipping each DS sheet in behind its divider slide…",
+    "Asking PowerPoint nicely to hurry up…",
+    "Matching divider titles — \"Flow Test\" and \"Air Flow Test\" are on speaking terms…",
+    "Putting the customer's pages up front where they like them…",
+    "Brazing the exhibits to the slides…",
+    "Final visual inspection on every page…",
+    "Boxing it up per customer requirements…",
+  ],
+};
+
+/** Cycles through `messages` every few seconds with a quick fade -- remounted (keyed) per export
+ * kind so each run starts on its plain-English first line. */
+function RotatingHint({ messages }: { messages: string[] }) {
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setIndex((i) => (i + 1) % messages.length), 3200);
+    return () => clearInterval(id);
+  }, [messages.length]);
+  return (
+    <p key={index} className="generating-overlay-hint rotating-hint">
+      {messages[index]}
+    </p>
+  );
+}
+
+/** An inline title box with Save / Cancel -- used for adding and renaming sections instead of the
+ * browser's prompt(), which some browsers (the app's own preview pane included) don't support.
+ * Enter saves, Esc cancels. */
+function InlineTitleForm({
+  initial = "",
+  placeholder,
+  submitLabel,
+  onSubmit,
+  onCancel,
+}: {
+  initial?: string;
+  placeholder: string;
+  submitLabel: string;
+  onSubmit: (title: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(initial);
+  const submit = () => {
+    if (value.trim()) onSubmit(value.trim());
+  };
+  return (
+    <span className="inline-title-form">
+      <input
+        type="text"
+        autoFocus
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") submit();
+          if (e.key === "Escape") onCancel();
+        }}
+      />
+      <button type="button" disabled={!value.trim()} onClick={submit}>
+        {submitLabel}
+      </button>
+      <button type="button" className="secondary" onClick={onCancel}>
+        Cancel
+      </button>
+    </span>
+  );
+}
+
 // Matches the same sentinel in /api/browse's route -- requesting this "dir" returns the drives
 // list (Windows Explorer's "This PC") instead of a real folder's contents.
 const DRIVES_ROOT = "__DRIVES__";
@@ -738,8 +832,11 @@ function NarrativeEditor({
   // Throw the current text away and redraft: "auto" starts from the last report of the same
   // product again (this job's own recommendations, for the Repair Summary), "router" uses only
   // this job's routers.
+  // Asked inline (see pendingStartOver below) rather than with the browser's confirm().
+  const [pendingStartOver, setPendingStartOver] = useState<"auto" | "router" | null>(null);
+  const requestStartOver = (source: "auto" | "router") => (draft.trim() ? setPendingStartOver(source) : startOver(source));
   const startOver = async (source: "auto" | "router") => {
-    if (draft.trim() && !confirm("Replace the current text with a fresh draft? Your edits to this section will be lost.")) return;
+    setPendingStartOver(null);
     setBusy(true);
     try {
       const res = await fetch("/api/draft", {
@@ -771,12 +868,26 @@ function NarrativeEditor({
             "Drafted from this job's routers — no earlier report of the same product was found."
           )}
         </span>
-        <button type="button" className="secondary" disabled={busy} onClick={() => startOver("auto")}>
-          Start over from last report
-        </button>
-        <button type="button" className="secondary" disabled={busy} onClick={() => startOver("router")}>
-          Start over from router
-        </button>
+        {pendingStartOver ? (
+          <span className="inline-confirm">
+            Replace the current text? Your edits to this section will be lost.
+            <button type="button" disabled={busy} onClick={() => startOver(pendingStartOver)}>
+              Replace
+            </button>
+            <button type="button" className="secondary" onClick={() => setPendingStartOver(null)}>
+              Cancel
+            </button>
+          </span>
+        ) : (
+          <>
+            <button type="button" className="secondary" disabled={busy} onClick={() => requestStartOver("auto")}>
+              Start over from last report
+            </button>
+            <button type="button" className="secondary" disabled={busy} onClick={() => requestStartOver("router")}>
+              Start over from router
+            </button>
+          </>
+        )}
       </div>
       {section.state.draftError && !draft && (
         <p className="confidence-note" style={{ color: "#a4141a" }}>
@@ -1430,6 +1541,9 @@ function SectionPanel({
     onRefresh();
   };
   const printPdfExcluded = Boolean(section.printPdfFile) && Boolean(section.state.excludePrintPdf);
+  // Inline rename box / delete confirmation (not the browser's prompt()/confirm()).
+  const [renaming, setRenaming] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   return (
     <div>
@@ -1437,27 +1551,44 @@ function SectionPanel({
         <h2 style={{ margin: 0 }}>{section.title}</h2>
         {(section.custom || section.divider) && (
           <span className="custom-section-actions">
-            <button
-              type="button"
-              className="secondary"
-              title="Change the title printed on this section's divider page / slide"
-              onClick={() => {
-                const title = prompt("Section title (printed on its divider page / slide):", section.title);
-                if (title && title.trim()) onRenameCustom(title.trim());
-              }}
-            >
-              Rename
-            </button>
-            {section.custom && (
-            <button
-              type="button"
-              className="secondary"
-              onClick={() => {
-                if (confirm(`Delete the "${section.title}" section from this report? Files you attached stay in the job folder's "_Manual Attachments" folder.`)) onDeleteCustom();
-              }}
-            >
-              Delete section
-            </button>
+            {renaming ? (
+              <InlineTitleForm
+                initial={section.title}
+                placeholder="Title on its divider page / slide"
+                submitLabel="Save"
+                onSubmit={(title) => {
+                  setRenaming(false);
+                  onRenameCustom(title);
+                }}
+                onCancel={() => setRenaming(false)}
+              />
+            ) : confirmingDelete ? (
+              <span className="inline-confirm">
+                Delete this section? Attached files stay in the job folder.
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmingDelete(false);
+                    onDeleteCustom();
+                  }}
+                >
+                  Delete
+                </button>
+                <button type="button" className="secondary" onClick={() => setConfirmingDelete(false)}>
+                  Cancel
+                </button>
+              </span>
+            ) : (
+              <>
+                <button type="button" className="secondary" title="Change the title printed on this section's divider page / slide" onClick={() => setRenaming(true)}>
+                  Rename
+                </button>
+                {section.custom && (
+                  <button type="button" className="secondary" onClick={() => setConfirmingDelete(true)}>
+                    Delete section
+                  </button>
+                )}
+              </>
             )}
           </span>
         )}
@@ -1537,6 +1668,8 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   // Which export is running (drives the overlay text); null when idle.
   const [generating, setGenerating] = useState<null | "pdf" | "deck" | "final">(null);
+  // The sidebar's inline "+ Add section" title box (see InlineTitleForm).
+  const [addingSection, setAddingSection] = useState(false);
   // Which sidebar row is being dragged / currently dragged over, purely for the drag-and-drop
   // visual feedback below (dimming the dragged row, highlighting the drop target) -- the actual
   // reorder itself only happens on drop, via reorderSections.
@@ -1688,11 +1821,8 @@ export default function Home() {
   // the rescan happens anyway once a file is attached to it.
   const customSectionAction = async (action: "add" | "rename" | "delete" | "retitle", id?: string, titleIn?: string) => {
     if (!jobRoot || !scan) return;
-    let title = titleIn;
-    if (action === "add") {
-      title = prompt("New section title (printed on its divider page / slide), e.g. \"Eddy Current Map\":") ?? "";
-      if (!title.trim()) return;
-    }
+    const title = titleIn;
+    if (action === "add" && !title?.trim()) return;
     try {
       const res = await fetch("/api/custom-section", {
         method: "POST",
@@ -1905,9 +2035,23 @@ export default function Home() {
                 )}
               </div>
             ))}
-            <button type="button" className="add-section-btn" onClick={() => customSectionAction("add")}>
-              + Add section
-            </button>
+            {addingSection ? (
+              <div className="add-section-form">
+                <InlineTitleForm
+                  placeholder='Section title, e.g. "Eddy Current Map"'
+                  submitLabel="Add"
+                  onSubmit={(title) => {
+                    setAddingSection(false);
+                    customSectionAction("add", undefined, title);
+                  }}
+                  onCancel={() => setAddingSection(false)}
+                />
+              </div>
+            ) : (
+              <button type="button" className="add-section-btn" onClick={() => setAddingSection(true)}>
+                + Add section
+              </button>
+            )}
             <div className="sidebar-logo-spacer" aria-hidden="true">
               <img src="/apg-logo-transparent.png" alt="" className="sidebar-logo-img" />
             </div>
@@ -1915,6 +2059,7 @@ export default function Home() {
         </nav>
         <main className="main-panel">
           <SectionPanel
+            key={selectedSection.id}
             jobRoot={jobRoot}
             section={selectedSection}
             metadata={scan.metadata}
@@ -1962,13 +2107,7 @@ export default function Home() {
           <div className="generating-overlay-card">
             <AppLogoMark animated />
             <p className="generating-overlay-text">{generating === "deck" ? "Building PowerPoint…" : "Generating report…"}</p>
-            <p className="generating-overlay-hint">
-              {generating === "deck"
-                ? "Laying out the cover, summary, repairs, dividers and photo slides."
-                : generating === "final"
-                  ? "Exporting your deck through PowerPoint and inserting every exhibit after its divider slide — a few minutes on a big job."
-                  : "Assembling every section and exhibit into the final PDF."}
-            </p>
+            <RotatingHint key={generating} messages={GENERATING_QUIPS[generating]} />
           </div>
         </div>
       )}

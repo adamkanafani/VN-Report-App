@@ -1754,3 +1754,54 @@ button.generate-report:active:not(:disabled) {
   padding: 6px 12px;
   font-size: 13px;
 }
+
+/* The rotating one-liner under "Generating report…" (see RotatingHint) -- each new line fades up
+   in place; a fixed min-height keeps the card from jumping when lines wrap differently. */
+.rotating-hint {
+  min-height: 3em;
+  animation: rotating-hint-in 0.35s ease-out;
+}
+
+@keyframes rotating-hint-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Inline title box (add / rename a section) and inline "are you sure?" -- replacing the browser's
+   prompt()/confirm(), which some browsers (including the app's own preview pane) don't support. */
+.inline-title-form,
+.inline-confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #23406e;
+}
+
+.inline-title-form input {
+  min-width: 220px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.inline-title-form button,
+.inline-confirm button {
+  padding: 5px 12px;
+  font-size: 13px;
+}
+
+.add-section-form {
+  margin: 10px;
+}
+
+.add-section-form .inline-title-form input {
+  min-width: 0;
+  width: 100%;
+}
