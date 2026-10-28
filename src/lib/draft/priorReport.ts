@@ -107,6 +107,10 @@ const REPORT_NAME = { ia: /(ia|incoming)\s*report/i, repair: /repair\s*report/i 
 /** The most recent other job of the same product (by job number) that has a finished report deck
  * of the requested kind -- the standard deck, not the "-FS" field-service short version or a
  * "Copy of". Only looks inside the same "Working Jobs" tree the current job lives in. */
+/** Where APG's job folders live -- the fallback search location for past reports (see
+ * findPriorReport). Overridable with VN_WORKING_JOBS for a machine that maps the share elsewhere. */
+const DEFAULT_WORKING_JOBS = process.env.VN_WORKING_JOBS || "T:\\!Jobs!\\Working Jobs";
+
 function deckRank(name: string): number {
   if (/\brev(ised)?\b/i.test(name)) return 0;
   return /report\.pptx$/i.test(name) ? 1 : 2;
@@ -115,8 +119,12 @@ function deckRank(name: string): number {
 export async function findPriorReport(jobRoot: string, metadata: JobMetadata, kind: "ia" | "repair"): Promise<PriorReport | null> {
   const key = productKeyFor(metadata);
   if (!key) return null;
-  const workingJobs = path.dirname(path.dirname(jobRoot));
-  if (!/working jobs/i.test(path.basename(workingJobs))) return null;
+  // Normally the Working Jobs tree the job itself sits in. A job copied somewhere else (a test copy
+  // in OneDrive, say) still looks up past reports on the shared drive -- this job's own number is
+  // skipped below either way, so a test copy never drafts from its own finished report left there.
+  const parentTree = path.dirname(path.dirname(jobRoot));
+  const workingJobs = /working jobs/i.test(path.basename(parentTree)) ? parentTree : DEFAULT_WORKING_JOBS;
+  if (!(await fs.stat(toLongPath(workingJobs)).catch(() => null))?.isDirectory()) return null;
 
   const current = Number(metadata.jobNumber) || Number.MAX_SAFE_INTEGER;
   const candidates = (await listJobFolders(workingJobs))
