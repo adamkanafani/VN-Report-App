@@ -282,6 +282,20 @@ footer.app-header::before {
   gap: 8px;
 }
 
+/* Confidence tag on the left, status badge pinned to the right -- one line under the title. */
+.section-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+}
+
+.section-meta-row .confidence-tag {
+  margin-top: 0;
+  white-space: nowrap;
+}
+
 .section-item .title-row span:first-child {
   font-weight: 700;
   font-size: 15px;

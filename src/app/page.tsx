@@ -2019,11 +2019,21 @@ export default function Home() {
                 <button type="button" className="section-item-select" onClick={() => setSelectedId(s.id)}>
                   <div className="title-row">
                     <span>{s.title}</span>
+                  </div>
+                  {/* Badge on its own line under the title, so every row's badge sits in the same
+                      spot however long the title runs ("Repair Recommendations" used to push it
+                      into the ✕). */}
+                  <div className="section-meta-row">
+                    <span className="confidence-tag">{s.automationConfidence} confidence</span>
                     <StatusBadge status={s.status} acknowledged={s.state.acknowledged} omitted={omittedReason(s)} />
                   </div>
-                  <div className="confidence-tag">{s.automationConfidence} confidence</div>
                 </button>
-                {s.id !== "cover" && (
+                {s.id === "cover" ? (
+                  // Same width as the ✕ on every other row, so the cover's badge lines up with theirs.
+                  <span className="section-remove-btn" aria-hidden="true" style={{ visibility: "hidden" }}>
+                    ✕
+                  </span>
+                ) : (
                   <button
                     type="button"
                     className="section-remove-btn"
