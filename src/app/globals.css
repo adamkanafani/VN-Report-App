@@ -979,9 +979,10 @@ button.generate-report:active:not(:disabled) {
   box-shadow: none;
 }
 
-.photo-filter-tab:hover:not(.active) {
+button.photo-filter-tab:hover:not(.active):not(:disabled) {
   border-color: #0b3d91;
-  color: #0b3d91;
+  background: #0b3d91;
+  color: #ffffff;
 }
 
 .photo-filter-tab.active {
@@ -1361,9 +1362,11 @@ button.generate-report:active:not(:disabled) {
   box-shadow: none;
 }
 
-.folder-source-tab:hover:not(.active) {
+/* "button." so this outranks the global navy button hover, which used to leave navy text on navy. */
+button.folder-source-tab:hover:not(.active):not(:disabled) {
   border-color: #0b3d91;
-  color: #0b3d91;
+  background: #0b3d91;
+  color: #ffffff;
 }
 
 .folder-source-tab.active {
@@ -2171,4 +2174,19 @@ button.photo-slot-remove:hover:not(:disabled) {
     position: static;
     max-height: none;
   }
+}
+
+.photo-group-actions {
+  display: inline-flex;
+  gap: 12px;
+}
+
+/* While a photo is being dragged, every slot shows it's a drop target. */
+.photo-slot.drop-ready:not(.filled) {
+  border-color: #0b3d91;
+  background: #eaf2fc;
+}
+
+.photo-preview img[draggable="true"] {
+  cursor: grab;
 }

@@ -19,6 +19,9 @@ export interface SectionState {
   /** Photos the tech rep moved to a different photo group ("NDT Photos" for a shot the shop saved
    * under Incoming), by relative path → group title. */
   photoGroupOverrides?: Record<string, string>;
+  /** Per report ("ia" / "final"): the slot each placed photo sits in within its group (page =
+   * slot / 6), so a page can be started before the one above it is full -- see layoutGroup. */
+  photoSlotsByReport?: Record<string, Record<string, number>>;
   /** For the cover section: reviewer overrides/fill-ins for fields with no reliable auto-source
    * (Tech Rep, Customer PO, Prior Repair, Coating, ...), keyed the same as JobMetadata. */
   fields?: Record<string, string>;

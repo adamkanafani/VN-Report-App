@@ -6,7 +6,7 @@ import { COVER_FIELD_ORDER } from "../ingest/jobMetadata";
 import { applySectionOrder, sectionOrderFor, type JobState, type SectionState } from "../state/jobState";
 import { effectiveMultiSelection, isExcluded } from "../state/selection";
 import { excelExhibitToPdf } from "./excelExhibit";
-import { groupPhotos, photoPick, PHOTOS_PER_REPORT_PAGE } from "./photoGroups";
+import { groupPhotos, photoPages, photoPick, photoSlots } from "./photoGroups";
 import { applyTableEdits, type ParsedTable } from "../ingest/parsers/types";
 
 // APG's real letterhead colors, sampled directly from a completed report (Job #20443): a short
@@ -177,9 +177,10 @@ async function renderPhotoPages(section: SectionScanResult, jobRoot: string, sec
   // the tech rep laid out in the photo picker and the same layout as the PowerPoint photo slides.
   const pages: string[] = [];
   for (const { label, paths: group } of groupPhotos(paths, sectionState?.photoGroupOverrides)) {
-    for (let i = 0; i < group.length; i += PHOTOS_PER_REPORT_PAGE) {
+    for (const page of photoPages(group, photoSlots(sectionState, reportType))) {
       const images = await Promise.all(
-        group.slice(i, i + PHOTOS_PER_REPORT_PAGE).map(async (relativePath) => {
+        page.map(async (relativePath) => {
+          if (!relativePath) return "<figure></figure>";
           try {
             return `<figure><img src="${await photoToDataUri(path.join(jobRoot, relativePath))}" /></figure>`;
           } catch {

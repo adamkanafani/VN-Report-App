@@ -70,11 +70,42 @@ export function groupPhotos(paths: string[], overrides?: Record<string, string>)
   return [...groups.entries()].sort((a, b) => a[1].rank - b[1].rank).map(([label, g]) => ({ label, paths: g.paths }));
 }
 
+/** A group's photos placed in their slots (page = slot / 6): each photo at the slot the tech rep put
+ * it in, where it has one, the rest after the last placed photo. Empty slots are null -- a page
+ * started before the one above it was full ("+ Add page" in the photo picker) keeps its gap. */
+export function layoutGroup(paths: string[], slots?: Record<string, number>): Array<string | null> {
+  const out: Array<string | null> = [];
+  const rest: string[] = [];
+  for (const p of paths) {
+    const i = slots?.[p];
+    if (i !== undefined && i >= 0 && !out[i]) out[i] = p;
+    else rest.push(p);
+  }
+  out.push(...rest);
+  return Array.from(out, (p) => p ?? null);
+}
+
+/** The pages a group prints: six slots each, empty slots null, pages with nothing on them dropped. */
+export function photoPages(paths: string[], slots?: Record<string, number>): Array<Array<string | null>> {
+  const laid = layoutGroup(paths, slots);
+  const pages: Array<Array<string | null>> = [];
+  for (let i = 0; i < laid.length; i += PHOTOS_PER_REPORT_PAGE) {
+    const page = laid.slice(i, i + PHOTOS_PER_REPORT_PAGE);
+    if (page.some(Boolean)) pages.push(page);
+  }
+  return pages;
+}
+
+/** The slot each photo sits in for one report (see layoutGroup). */
+export function photoSlots(sectionState: { photoSlotsByReport?: Record<string, Record<string, number>> } | undefined, reportType: string): Record<string, number> | undefined {
+  return sectionState?.photoSlotsByReport?.[/repair|final/i.test(reportType) ? "final" : "ia"];
+}
+
 /** The photos a photo section prints for one report, in order (see the photo picker on the review
- * screen). The report's own pick once the tech rep has made one; the Final's repeated incoming
- * block otherwise starts from the I&A's pick; then the automatic (AI) pick when there is one.
- * With none of those, the Final starts with just its shipping photos -- tech reps choose the rest
- * deliberately -- and the I&A with every photo, as before. Photos no longer in the folder drop out. */
+ * screen). The report's own pick once the tech rep has made one. Otherwise: the I&A starts from the
+ * automatic (AI) pick, else every photo, as before; the Final's repeated incoming block starts from
+ * the I&A's pick; and the Final Photographs start empty -- tech reps place each one deliberately.
+ * Photos no longer in the folder drop out. */
 export function photoPick(
   section: { id: string; matchedFiles: Array<{ relativePath: string }> },
   sectionState: { selectedPhotoPaths?: string[]; selectedPhotoPathsByReport?: Record<string, string[]>; photoGroupOverrides?: Record<string, string> } | undefined,
@@ -85,12 +116,10 @@ export function photoPick(
   const keep = (paths: string[] | undefined) => paths?.filter((p) => exists.has(p));
   const own = keep(sectionState?.selectedPhotoPathsByReport?.[final ? "final" : "ia"]);
   if (own) return own;
-  if (final && section.id === "photoSet") {
-    const ia = keep(sectionState?.selectedPhotoPathsByReport?.ia);
-    if (ia?.length) return ia;
-  }
   const auto = keep(sectionState?.selectedPhotoPaths);
-  if (auto?.length) return auto;
-  const all = section.matchedFiles.map((f) => f.relativePath);
-  return final ? all.filter((p) => photoGroupOf(p, sectionState?.photoGroupOverrides).rank === 0) : all;
+  if (final) {
+    if (section.id !== "photoSet") return [];
+    return keep(sectionState?.selectedPhotoPathsByReport?.ia) ?? auto ?? [];
+  }
+  return auto?.length ? auto : section.matchedFiles.map((f) => f.relativePath);
 }
