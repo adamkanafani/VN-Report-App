@@ -17,6 +17,9 @@ export type SectionStatus = "ready" | "needs-attention" | "missing";
 export interface SectionScanResult {
   id: string;
   title: string;
+  /** This section prints different files in the FS (Fleet Service) version -- it has "... FS"
+   * copies of its sheets, or an F-306-01 NDT form (see scanMultiSection). */
+  fsDiffers?: boolean;
   generation: GenerationStrategy;
   automationConfidence: AutomationConfidence;
   alwaysReview?: boolean;
@@ -173,6 +176,7 @@ async function scanMultiSection(
   variant: "standard" | "fs"
 ): Promise<SectionScanResult> {
   const matched = findCandidates(section.sourceRules, files).flatMap((m) => m.candidates);
+  const fsSheets = matched.some((f) => isFs(f) || (/ndt/i.test(section.id) && /^f-?306/i.test(f.baseName)));
   const manual = base.manualAttachments ?? [];
 
   // Fleet Service duplicates ("DS-0319 ... INCOMING FS.pdf" beside "DS-0319 ... INCOMING.pdf", Job
@@ -280,6 +284,7 @@ async function scanMultiSection(
       .join(" "),
     matchedFiles: candidates,
     defaultSelectedPaths,
+    fsDiffers: fsSheets,
   };
 }
 

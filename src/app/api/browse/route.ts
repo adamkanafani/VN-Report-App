@@ -134,12 +134,42 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T
   });
 }
 
+// Folder listings reused across a search's keystrokes ("2", "20", "209", ...) for a few minutes, so
+// each refinement doesn't re-read the same network folders. Only the search uses this; plain
+// browsing always reads fresh.
+const LISTING_TTL_MS = 5 * 60_000;
+const listingCache = new Map<string, { at: number; names: Promise<string[]> }>();
+
+function cachedSubdirNames(dir: string): Promise<string[]> {
+  const hit = listingCache.get(dir);
+  if (hit && Date.now() - hit.at < LISTING_TTL_MS) return hit.names;
+  const names = listSubdirNames(dir);
+  listingCache.set(dir, { at: Date.now(), names });
+  return names;
+}
+
 export interface FolderSearchResult {
   /** Path from the folder the search started at, down to the match, backslash-joined -- shown so
    * two same-named matches under different parents (or a match several levels down) are still
    * distinguishable in the results list. */
   relativePath: string;
   fullPath: string;
+}
+
+/** Which subfolders a search needs to open. Working Jobs is split into job-number buckets named by
+ * the job-number prefix plus "000" -- "209000" holds jobs 20900-20999, "29000" holds 2900-2999 --
+ * so a job-number query only opens the few buckets whose prefix fits it (3 for "20992") instead of
+ * all ~300 folders on the network drive, and skips the non-job folders there (Templates, PO
+ * INCOMING, ...), whose own names are still matched. Any other query, or a folder that isn't split
+ * into buckets, opens every subfolder as before. */
+function bucketsFor(names: string[], q: string): string[] {
+  const isBucket = (n: string) => /^\d{4,6}$/.test(n) && n.endsWith("000");
+  if (!/^\d{2,}$/.test(q) || names.filter(isBucket).length < 20) return names;
+  return names.filter((n) => {
+    if (!isBucket(n)) return false;
+    const prefix = n.slice(0, -3).replace(/^0+/, "");
+    return prefix !== "" && (q.startsWith(prefix) || prefix.startsWith(q));
+  });
 }
 
 /** Recursively searches for subfolder names containing `query` (case-insensitive), starting from
@@ -150,6 +180,7 @@ export interface FolderSearchResult {
  * same mapped drive -- which in practice looked exactly like a hung request, not a slow one. */
 async function searchFolders(root: string, query: string): Promise<{ results: FolderSearchResult[]; truncated: boolean }> {
   const q = query.toLowerCase();
+  const words = q.split(/\s+/).filter(Boolean);
   const results: FolderSearchResult[] = [];
   const deadline = Date.now() + SEARCH_TIME_BUDGET_MS;
   let dirsScanned = 0;
@@ -165,14 +196,16 @@ async function searchFolders(root: string, query: string): Promise<{ results: Fo
       return;
     }
     dirsScanned++;
-    const names = await withTimeout(listSubdirNames(dir), PER_DIR_TIMEOUT_MS, []);
+    const names = await withTimeout(cachedSubdirNames(dir), PER_DIR_TIMEOUT_MS, []);
 
     for (const name of names) {
       if (results.length >= MAX_SEARCH_RESULTS) {
         truncated = true;
         break;
       }
-      if (name.toLowerCase().includes(q)) {
+      // Every word typed, in any order ("gt2 diaphragm" finds "... ST-GT2 501F CM2 ROW 1 COMPRESSOR DIAPHRAGM").
+      const lower = name.toLowerCase();
+      if (words.every((w) => lower.includes(w))) {
         results.push({ relativePath: relative ? `${relative}\\${name}` : name, fullPath: path.join(dir, name) });
       }
     }
@@ -181,7 +214,7 @@ async function searchFolders(root: string, query: string): Promise<{ results: Fo
       if (depth < MAX_SEARCH_DEPTH) truncated = true; // stopped early on budget, not just depth
       return;
     }
-    await mapWithConcurrency(names, FS_CONCURRENCY, (name) => walk(path.join(dir, name), relative ? `${relative}\\${name}` : name, depth + 1));
+    await mapWithConcurrency(bucketsFor(names, q), FS_CONCURRENCY, (name) => walk(path.join(dir, name), relative ? `${relative}\\${name}` : name, depth + 1));
   }
 
   await walk(root, "", 0);

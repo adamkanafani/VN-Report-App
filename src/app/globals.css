@@ -1465,11 +1465,20 @@ button.generate-report:active:not(:disabled) {
   color: #0b3d91;
 }
 
+/* Inside the box, left of the ✕ -- as its own line below the box it made the box area taller and
+   pushed the vertically centered ✕ down while a search ran. */
 .folder-search-status {
-  display: block;
-  margin-top: 6px;
+  position: absolute;
+  top: 50%;
+  right: 36px;
+  transform: translateY(-50%);
   font-size: 12px;
   color: #6a7fa3;
+  pointer-events: none;
+}
+
+.folder-search-input.searching {
+  padding-right: 110px;
 }
 
 .folder-search-hint {
@@ -1778,9 +1787,13 @@ button.generate-report:active:not(:disabled) {
   font-weight: 700;
 }
 
-.add-section-btn:hover:not(:disabled) {
-  background: #eaf1fb;
-  color: #0b3d91;
+/* "button." so this outranks the global navy button hover (which used to win and leave navy text on
+   a navy fill); navy fill with white lettering, solid border. */
+button.add-section-btn:hover:not(:disabled) {
+  background: #0b3d91;
+  color: #ffffff;
+  border-style: solid;
+  border-color: #0b3d91;
   box-shadow: none;
 }
 
@@ -1875,4 +1888,16 @@ button.generate-report:active:not(:disabled) {
   background: #eaf2fc;
   color: #0b3d91;
   box-shadow: none;
+}
+
+/* "FS" chip on sidebar tabs whose content differs in the Fleet Service version. */
+.fs-tag {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #0b3d91;
+  color: #ffffff;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }

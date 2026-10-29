@@ -284,19 +284,27 @@ function FolderPicker({ onJobFolderChosen, onBack }: { onJobFolderChosen: (path:
       return;
     }
     setSearching(true);
+    // A newer keystroke cancels the older search, so a slow earlier query ("2") can't land after
+    // and overwrite the results for the one actually typed ("20992").
+    const controller = new AbortController();
     const handle = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/browse?dir=${encodeURIComponent(dir)}&q=${encodeURIComponent(query.trim())}`);
+        const res = await fetch(`/api/browse?dir=${encodeURIComponent(dir)}&q=${encodeURIComponent(query.trim())}`, { signal: controller.signal });
         const data = await res.json();
-        if (res.ok) {
+        if (res.ok && !controller.signal.aborted) {
           setSearchResults(data.results ?? []);
           setSearchTruncated(!!data.truncated);
         }
+      } catch {
+        // aborted by a newer keystroke
       } finally {
-        setSearching(false);
+        if (!controller.signal.aborted) setSearching(false);
       }
     }, 300);
-    return () => clearTimeout(handle);
+    return () => {
+      clearTimeout(handle);
+      controller.abort();
+    };
   }, [query, dir, isDriveList]);
 
   const searchActive = searchResults !== null;
@@ -336,7 +344,7 @@ function FolderPicker({ onJobFolderChosen, onBack }: { onJobFolderChosen: (path:
           <div className="folder-search">
             <input
               type="text"
-              className="folder-search-input"
+              className={`folder-search-input ${searching ? "searching" : ""}`}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search job folders inside here…"
@@ -1910,6 +1918,12 @@ export default function Home() {
     }
   };
 
+  // Which sections the FS version prints differently: FS copies of its sheets / the F-306-01 NDT
+  // form, or a shorter FS text for the repair lists.
+  const fsChanges = (s: SectionWithState) =>
+    Boolean(s.fsDiffers) || ((s.id === "repairRecommendations" || s.id === "repairSummary") && Boolean(s.state.compactContent?.trim()));
+  const fsChangedTitles = scan ? scan.sections.filter((s) => !isExcluded(s, s.state) && fsChanges(s as SectionWithState)).map((s) => s.title) : [];
+
   // Calpine jobs get two copies of each report: the standard one and the shorter Fleet Service (FS)
   // one -- FS copies of the sheets and the FS repair lists. Rescans so the panel shows that version.
   const setVariant = async (variant: JobScanResult["variant"]) => {
@@ -2083,7 +2097,14 @@ export default function Home() {
                       spot however long the title runs ("Repair Recommendations" used to push it
                       into the ✕). */}
                   <div className="section-meta-row">
-                    <span className="confidence-tag">{s.automationConfidence} confidence</span>
+                    <span className="confidence-tag">
+                      {s.automationConfidence} confidence
+                      {scan.fsAvailable && fsChanges(s) && (
+                        <span className="fs-tag" title="Prints differently in the FS (Fleet Service) version">
+                          FS
+                        </span>
+                      )}
+                    </span>
                     <StatusBadge status={s.status} acknowledged={s.state.acknowledged} omitted={omittedReason(s)} />
                   </div>
                 </button>
@@ -2147,7 +2168,10 @@ export default function Home() {
       <footer className="app-header" style={{ justifyContent: "flex-end" }}>
         {!allAddressed && <span className="confidence-note">Some sections still need attention.</span>}
         {scan.fsAvailable && (
-          <span className="variant-switch" title="Calpine reports go out in two versions: the standard report and the shorter Fleet Service (FS) copy">
+          <span
+            className="variant-switch"
+            title={`Calpine reports go out in two versions: the standard report and the shorter Fleet Service (FS) copy. Sections that differ (tagged FS in the list): ${fsChangedTitles.join(", ") || "none on this job"}. Everything else is identical.`}
+          >
             Version:
             <button type="button" className={scan.variant === "standard" ? "active" : ""} disabled={generating !== null} onClick={() => setVariant("standard")}>
               Standard
