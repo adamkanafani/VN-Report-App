@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { scanJobFolder } from "@/lib/ingest/scanJobFolder";
 import { templateForJob } from "@/lib/report-templates/forJob";
 import { loadJobState } from "@/lib/state/jobState";
+import { autoDraftJob } from "@/lib/draft/autoDraft";
 import { buildDeck, deckFileName } from "@/lib/pptx/buildDeck";
 
 /** The report as an editable PowerPoint deck in Alfredo's format (see buildDeck.ts). */
@@ -9,7 +10,10 @@ export async function POST(request: NextRequest) {
   const { jobRoot, reportType } = (await request.json()) as { jobRoot?: string; reportType?: string };
   if (!jobRoot) return NextResponse.json({ error: "jobRoot is required" }, { status: 400 });
   try {
-    const scan = await scanJobFolder(jobRoot, await templateForJob(jobRoot, reportType));
+    const template = await templateForJob(jobRoot, reportType);
+    const scan = await scanJobFolder(jobRoot, template);
+    // Same safety net as the Quick PDF (see generateReport.ts): redraft only sections with no saved draft.
+    await autoDraftJob(scan, template);
     const state = await loadJobState(jobRoot);
     const buffer = await buildDeck(scan, state);
     const name = deckFileName(scan);

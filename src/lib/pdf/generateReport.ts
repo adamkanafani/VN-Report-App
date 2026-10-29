@@ -3,6 +3,7 @@ import { PDFDocument } from "pdf-lib";
 import { scanJobFolder } from "../ingest/scanJobFolder";
 import { templateForJob } from "../report-templates/forJob";
 import { loadJobState } from "../state/jobState";
+import { autoDraftJob } from "../draft/autoDraft";
 import { renderReportSegments } from "./renderReportHtml";
 import { htmlToPdf } from "./htmlToPdf";
 import { toLongPath } from "../util/longPath";
@@ -50,7 +51,12 @@ export async function appendPdfPages(doc: PDFDocument, sourcePath: string): Prom
 }
 
 export async function generateReportPdf(jobRoot: string, reportType?: string): Promise<{ buffer: Buffer; skippedAttachments: string[] }> {
-  const scan = await scanJobFolder(jobRoot, await templateForJob(jobRoot, reportType));
+  const template = await templateForJob(jobRoot, reportType);
+  const scan = await scanJobFolder(jobRoot, template);
+  // Fills any section whose saved draft is gone (job state cleared or lost while the page stayed
+  // open) the same way a scan would -- otherwise the panel shows the draft and the PDF prints "No
+  // draft generated yet". Sections that already have content are left alone.
+  await autoDraftJob(scan, template);
   const state = await loadJobState(jobRoot);
   const { segments, skippedAttachments } = await renderReportSegments(scan, state);
 
