@@ -2075,8 +2075,8 @@ export default function Home() {
       </div>
       <footer className="app-header" style={{ justifyContent: "flex-end" }}>
         {!allAddressed && <span className="confidence-note">Some sections still need attention.</span>}
-        <button className="secondary" disabled={generating !== null} onClick={generateReport} title="Build the PDF straight from the app, without a PowerPoint step">
-          Quick PDF
+        <button className="secondary" disabled={generating !== null} onClick={downloadDeck}>
+          {generating === "deck" ? "Building PowerPoint..." : "1. Download PowerPoint"}
         </button>
         <input
           id="edited-deck-input"
@@ -2094,8 +2094,8 @@ export default function Home() {
         <label htmlFor="edited-deck-input" className={`button-like secondary ${generating !== null ? "disabled" : ""}`} title="Pick your edited PowerPoint -- the PDF gets every exhibit inserted after its divider slide">
           2. Build PDF from edited PowerPoint…
         </label>
-        <button className="generate-report" disabled={generating !== null} onClick={downloadDeck}>
-          {generating === "deck" ? "Building PowerPoint..." : "1. Download PowerPoint"}
+        <button className="generate-report" disabled={generating !== null} onClick={generateReport} title="Build the PDF straight from the app, without a PowerPoint step">
+          Quick PDF
         </button>
       </footer>
       {/* Same fill-loop mark as the initial job-scan screen, in an overlay rather than a full
