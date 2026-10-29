@@ -26,5 +26,5 @@ export async function templateForJob(jobRoot: string, reportType: string | undef
   const custom = state.customSections?.[template.reportType] ?? [];
   const titles = state.sectionTitles?.[template.reportType] ?? {};
   const sections = [...template.sections, ...custom.map(customSectionConfig)].map((s) => (titles[s.id] ? { ...s, title: titles[s.id] } : s));
-  return { ...template, sections };
+  return { ...template, sections, variant: state.reportVariant?.[template.reportType] ?? "standard" };
 }

@@ -3,9 +3,14 @@ import path from "path";
 import crypto from "crypto";
 import os from "os";
 
+export type ReportVariant = "standard" | "fs";
+
 export interface SectionState {
   /** Current draft/content text (narrative sections), or a JSON-serialized table edit, etc. */
   content?: string;
+  /** The Fleet Service (FS) version's text for a section that's shorter there -- Calpine's FS
+   * Repair Recommendations / Repair Summary (Job 20992). Blank means the FS version prints `content`. */
+  compactContent?: string;
   /** For photo-select sections: the reviewer-confirmed selection. */
   selectedPhotoPaths?: string[];
   /** The same pick per report ("ia" / "final") once the tech rep changes it for that report -- see
@@ -86,6 +91,9 @@ export interface SectionState {
 
 export interface JobState {
   jobRoot: string;
+  /** Per report type: which version is being built -- the standard report or Calpine's shorter
+   * Fleet Service ("FS") copy. Standard when unset. */
+  reportVariant?: Record<string, ReportVariant>;
   sections: Record<string, SectionState>;
   /** The tech rep's own order for this job's report sections, by id -- lets related sections (e.g.
    * every heat-treat chart) be grouped together even when the report template's own default order

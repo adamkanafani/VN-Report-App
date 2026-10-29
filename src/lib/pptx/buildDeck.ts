@@ -4,7 +4,7 @@ import sharp from "sharp";
 import PptxGenJS from "pptxgenjs";
 import type { JobScanResult, SectionScanResult } from "../ingest/scanJobFolder";
 import type { JobState } from "../state/jobState";
-import { coverPages, hasExhibits, REPAIR_LIST_SECTIONS, reportSections } from "../pdf/renderReportHtml";
+import { coverPages, hasExhibits, REPAIR_LIST_SECTIONS, reportSections, sectionText } from "../pdf/renderReportHtml";
 import { groupPhotos, selectedPhotoPaths } from "../pdf/photoGroups";
 import { photoSelection } from "../state/selection";
 import { productKeyFor } from "../draft/priorReport";
@@ -266,7 +266,7 @@ export async function buildDeck(scan: JobScanResult, state: JobState): Promise<B
 
   for (const section of reportSections(scan, state)) {
     if (section.beforeCover) continue; // customer pages go in the PDF only
-    const content = state.sections[section.id]?.content ?? "";
+    const content = sectionText(scan, state, section.id) ?? "";
     if (section.generation === "llm-narrative") {
       if (!content.trim()) continue;
       if (REPAIR_LIST_SECTIONS.has(section.id)) addRepairListSlides(pptx, section.title, content);

@@ -343,6 +343,13 @@ ${bodyHtml}
 
 export const REPAIR_LIST_SECTIONS = new Set(["repairRecommendations", "repairSummary"]);
 
+/** A narrative section's text for the version being built: the FS version's own shorter text when
+ * it has one (see SectionState.compactContent), else the standard text. */
+export function sectionText(scan: Pick<JobScanResult, "variant">, state: JobState, id: string): string | undefined {
+  const s = state.sections[id];
+  return (scan.variant === "fs" && s?.compactContent?.trim()) || s?.content;
+}
+
 /** The cover's two pages of label/value rows -- page 1 up to and including Tech Rep, the
  * component-details page after it -- with the tech rep's overrides, custom fields and row order
  * applied and blank rows dropped. Shared by the PDF cover and the PowerPoint cover slides. */
@@ -457,7 +464,7 @@ export async function sectionExhibits(section: SectionScanResult, scan: JobScanR
 
 export async function renderReportSegments(scanIn: JobScanResult, state: JobState): Promise<RenderedReport> {
   const scan: JobScanResult = { ...scanIn, sections: reportSections(scanIn, state) };
-  const contentFor = (id: string) => state.sections[id]?.content;
+  const contentFor = (id: string) => sectionText(scan, state, id);
   const logo = await logoDataUri();
 
   const segments: ReportSegment[] = [];

@@ -165,13 +165,31 @@ export function repairSummaryDraft(
   source: "auto" | "router" = "auto",
   own: PriorDraft | null = null
 ): Draft | null {
+  // This job's own finished I&A deck first -- it's the version that went to the customer, after
+  // any edits made in PowerPoint (Job 20992) -- then the recommendations typed into this app.
+  if (source === "auto" && own?.repairRecommendations) return { content: recommendationsToSummary(own.repairRecommendations), seededFrom: ownLabel(own) };
   const ownRecs = state.sections["repairRecommendations"]?.content?.trim();
   if (source === "auto" && ownRecs) return { content: recommendationsToSummary(ownRecs), seededFrom: "this job's Repair Recommendations" };
-  // The I&A was done outside this app: restate the recommendations in its own deck (Job 20992).
-  if (source === "auto" && own?.repairRecommendations) return { content: recommendationsToSummary(own.repairRecommendations), seededFrom: ownLabel(own) };
   if (source === "auto" && prior?.repairRecommendations) return { content: recommendationsToSummary(prior.repairRecommendations), seededFrom: seededLabel(prior) };
   const router = scan.sections.find((s) => s.id === "repairSummary")?.parsedRouter;
   return router ? { content: buildRepairSummaryDraft(router) } : null;
+}
+
+/** The Fleet Service (FS) version of Repair Recommendations / Repair Summary: the shorter list off
+ * the deck's second Repair Recommendations slide (Calpine jobs -- see splitRecommendations), from
+ * this job's own I&A deck first, else the last same-product report; the summary is that list in the
+ * past tense. Null when neither deck has an FS list -- the FS version then prints the standard text. */
+export function compactDraft(sectionId: string, state: JobState, prior: PriorDraft | null, own: PriorDraft | null): Draft | null {
+  const src = own?.repairRecommendationsCompact ? own : prior?.repairRecommendationsCompact ? prior : null;
+  const label = src === own && own ? ownLabel(own) : src ? seededLabel(src) : undefined;
+  if (sectionId === "repairRecommendations") return src ? { content: src.repairRecommendationsCompact!, seededFrom: label } : null;
+  if (sectionId === "repairSummary") {
+    // Same order as repairSummaryDraft: this job's deck, then this app's FS recommendations.
+    const jobsOwn = state.sections["repairRecommendations"]?.compactContent?.trim();
+    if (!own?.repairRecommendationsCompact && jobsOwn) return { content: recommendationsToSummary(jobsOwn), seededFrom: "this job's FS Repair Recommendations" };
+    return src ? { content: recommendationsToSummary(src.repairRecommendationsCompact!), seededFrom: label } : null;
+  }
+  return null;
 }
 
 /**
@@ -279,7 +297,20 @@ export async function autoDraftJob(scan: JobScanResult, template: ReportTemplate
     }
   }
 
+  // The FS versions of the repair lists, for any that don't have one yet.
+  const compactIds = ["repairRecommendations", "repairSummary"].filter((id) => bySectionId.has(id) && !existingState.sections[id]?.compactContent?.trim());
+  const compactPrior = compactIds.length > 0 ? (prior ?? (await priorDraftFor(scan))) : null;
+  const compactState = { ...existingState, sections: { ...existingState.sections } };
+  const compactPatches: Record<string, string> = {};
+  for (const id of compactIds) {
+    const draft = compactDraft(id, compactState, compactPrior, own);
+    if (!draft) continue;
+    compactPatches[id] = draft.content;
+    compactState.sections[id] = { ...compactState.sections[id], compactContent: draft.content };
+  }
+
   const results = await Promise.all(jobs);
-  const patches = Object.fromEntries(results.filter((e): e is [string, Partial<SectionState>] => e !== null));
+  const patches: Record<string, Partial<SectionState>> = Object.fromEntries(results.filter((e): e is [string, Partial<SectionState>] => e !== null));
+  for (const [id, compactContent] of Object.entries(compactPatches)) patches[id] = { ...patches[id], compactContent };
   if (Object.keys(patches).length > 0) await updateSectionStates(jobRoot, patches);
 }

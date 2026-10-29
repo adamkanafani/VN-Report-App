@@ -86,4 +86,6 @@ export interface ReportTemplate {
   /** Also the cover page's title ("Incoming Report" / "Repair Report"). */
   reportType: string;
   sections: SectionConfig[];
+  /** Standard or Fleet Service (FS) version -- set per job by templateForJob. */
+  variant?: "standard" | "fs";
 }

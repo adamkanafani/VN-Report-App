@@ -3,7 +3,8 @@ import { scanJobFolder } from "@/lib/ingest/scanJobFolder";
 import { templateForJob } from "@/lib/report-templates/forJob";
 import { updateSectionState, loadJobState } from "@/lib/state/jobState";
 import { reviseSection } from "@/lib/draft/narrative";
-import { engineeringSummaryDraft, ownIaDraftFor, priorDraftFor, repairRecommendationsDraft, repairSummaryDraft } from "@/lib/draft/autoDraft";
+import { REPAIR_LIST_SECTIONS } from "@/lib/pdf/renderReportHtml";
+import { compactDraft, engineeringSummaryDraft, ownIaDraftFor, priorDraftFor, repairRecommendationsDraft, repairSummaryDraft } from "@/lib/draft/autoDraft";
 import { reportKey } from "@/lib/state/selection";
 import { selectBestPhotos } from "@/lib/draft/photoSelect";
 
@@ -27,6 +28,8 @@ export async function POST(request: NextRequest) {
     if (!section) return NextResponse.json({ error: `Unknown section ${sectionId}` }, { status: 404 });
 
     const jobState = await loadJobState(jobRoot);
+    // On the Fleet Service version the repair lists have their own shorter text (compactContent).
+    const fsText = scanResult.variant === "fs" && REPAIR_LIST_SECTIONS.has(sectionId);
     let content: string | undefined;
     let selectedPhotoPaths: string[] | undefined;
     let seededFrom: string | undefined;
@@ -37,7 +40,8 @@ export async function POST(request: NextRequest) {
       selectedPhotoPaths = result.includedPaths;
     } else if (section.generation === "llm-narrative") {
       if (instruction) {
-        content = await reviseSection({ title: section.title, currentDraft: jobState.sections[sectionId]?.content ?? "", instruction, ctx: { metadata: scanResult.metadata } });
+        const current = (fsText && jobState.sections[sectionId]?.compactContent) || jobState.sections[sectionId]?.content || "";
+        content = await reviseSection({ title: section.title, currentDraft: current, instruction, ctx: { metadata: scanResult.metadata } });
         seededFrom = jobState.sections[sectionId]?.seededFrom;
       } else {
         const mode = source ?? "auto";
@@ -45,13 +49,14 @@ export async function POST(request: NextRequest) {
         // "Start over" on a Repair Report goes back to this job's own I&A deck first, like the scan.
         const own = mode === "auto" ? await ownIaDraftFor(scanResult, scanResult.reportType) : null;
         const draft =
-          sectionId === "engineeringSummary"
+          (fsText && mode === "auto" ? compactDraft(sectionId, jobState, prior, own) : null) ??
+          (sectionId === "engineeringSummary"
             ? engineeringSummaryDraft(scanResult, prior, mode, own)
             : sectionId === "repairRecommendations"
               ? repairRecommendationsDraft(scanResult, prior, mode, own)
               : sectionId === "repairSummary"
                 ? repairSummaryDraft(scanResult, jobState, prior, mode, own)
-                : null;
+                : null);
         if (!draft) return NextResponse.json({ error: "No source data to draft this section from" }, { status: 400 });
         content = draft.content;
         seededFrom = draft.seededFrom;
@@ -61,7 +66,7 @@ export async function POST(request: NextRequest) {
     }
 
     const newState = await updateSectionState(jobRoot, sectionId, {
-      content,
+      ...(fsText ? { compactContent: content } : { content }),
       selectedPhotoPaths,
       // A fresh photo pick replaces this report's own pick too (see photoSelection).
       ...(selectedPhotoPaths && {

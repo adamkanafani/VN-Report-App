@@ -781,15 +781,18 @@ function NarrativeEditor({
   section,
   onUpdated,
   reportType,
+  fsText,
 }: {
   jobRoot: string;
   section: SectionWithState;
   onUpdated: (content: string) => void;
   reportType: ReportTypeId;
+  /** Editing the Fleet Service version's own shorter text (SectionState.compactContent). */
+  fsText: boolean;
 }) {
   // Keyed by section.id in SectionPanel below, so this remounts (and re-derives its initial
   // state from `section`) whenever the reviewer switches sections — no sync effect needed.
-  const [draft, setDraft] = useState(section.state.content ?? "");
+  const [draft, setDraft] = useState((fsText && section.state.compactContent) || section.state.content || "");
   const [instruction, setInstruction] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -821,7 +824,7 @@ function NarrativeEditor({
       await fetch("/api/section-state", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobRoot, sectionId: section.id, patch: { content: draft, draftError: null } }),
+        body: JSON.stringify({ jobRoot, sectionId: section.id, patch: { [fsText ? "compactContent" : "content"]: draft, draftError: null } }),
       });
       onUpdated(draft);
     } finally {
@@ -857,9 +860,18 @@ function NarrativeEditor({
 
   return (
     <div>
+      {fsText && (
+        <p className="confidence-note">
+          FS version: this is the shorter list printed in the Fleet Service copy. Edits here change only the FS report.
+        </p>
+      )}
       <div className="seeded-note">
         <span>
-          {section.state.seededFrom ? (
+          {section.state.seededFrom?.startsWith("this job") ? (
+            <>
+              Started from <strong>{section.state.seededFrom}</strong>.
+            </>
+          ) : section.state.seededFrom ? (
             <>
               Started from <strong>{section.state.seededFrom}</strong> — same product, earlier job. Measured values were filled in where this job&apos;s sheets
               have them; anything in [brackets] is the old job&apos;s value — check it.
@@ -1549,11 +1561,13 @@ function SectionPanel({
   onDeleteCustom,
   patchSectionState,
   reportType,
+  variant,
 }: {
   jobRoot: string;
   section: SectionWithState;
   metadata: JobScanResult["metadata"];
   reportType: ReportTypeId;
+  variant: JobScanResult["variant"];
   onRefresh: () => void;
   onReviewed: (acknowledged: boolean) => void;
   onToggleExcluded: (excluded: boolean) => void;
@@ -1676,11 +1690,12 @@ function SectionPanel({
           clicked to a different section and back. */}
       {section.generation === "llm-narrative" && (
         <NarrativeEditor
-          key={`${section.id}-${section.state.lastGeneratedAt ?? ""}`}
+          key={`${section.id}-${section.state.lastGeneratedAt ?? ""}-${variant}`}
           jobRoot={jobRoot}
           section={section}
           onUpdated={onRefresh}
           reportType={reportType}
+          fsText={variant === "fs" && (section.id === "repairRecommendations" || section.id === "repairSummary")}
         />
       )}
       {section.generation === "table-from-source" && (
@@ -1895,6 +1910,14 @@ export default function Home() {
     }
   };
 
+  // Calpine jobs get two copies of each report: the standard one and the shorter Fleet Service (FS)
+  // one -- FS copies of the sheets and the FS repair lists. Rescans so the panel shows that version.
+  const setVariant = async (variant: JobScanResult["variant"]) => {
+    if (!jobRoot || scan?.variant === variant) return;
+    await fetch("/api/report-variant", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobRoot, reportType, variant }) });
+    await runScan(jobRoot);
+  };
+
   // Quick PDF straight from the app, no PowerPoint step.
   const generateReport = async () => {
     if (!jobRoot) return;
@@ -1902,7 +1925,7 @@ export default function Home() {
     try {
       const res = await fetch("/api/generate-pdf", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobRoot, reportType }) });
       if (!res.ok) throw new Error(await failMessage(res, "PDF generation failed"));
-      await saveDownload(res, `${scan?.metadata.jobNumber ?? "report"} ${reportType === "final" ? "Repair" : "IA"} Report.pdf`);
+      await saveDownload(res, `${scan?.metadata.jobNumber ?? "report"} ${reportType === "final" ? "Repair" : "IA"} Report${scan?.variant === "fs" ? " FS" : ""}.pdf`);
       reportOmissions(res);
     } catch (e) {
       alert(e instanceof Error ? e.message : "PDF generation failed");
@@ -1918,7 +1941,7 @@ export default function Home() {
     try {
       const res = await fetch("/api/deck", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jobRoot, reportType }) });
       if (!res.ok) throw new Error(await failMessage(res, "PowerPoint export failed"));
-      await saveDownload(res, `${scan?.metadata.jobNumber ?? "report"} ${reportType === "final" ? "Repair" : "IA"} Report.pptx`);
+      await saveDownload(res, `${scan?.metadata.jobNumber ?? "report"} ${reportType === "final" ? "Repair" : "IA"} Report${scan?.variant === "fs" ? " FS" : ""}.pptx`);
     } catch (e) {
       alert(e instanceof Error ? e.message : "PowerPoint export failed");
     } finally {
@@ -2105,7 +2128,8 @@ export default function Home() {
         </nav>
         <main className="main-panel">
           <SectionPanel
-            key={selectedSection.id}
+            // Remounted on a Standard / FS switch too, so ticks and text are that version's.
+            key={`${selectedSection.id}-${scan.variant}`}
             jobRoot={jobRoot}
             section={selectedSection}
             metadata={scan.metadata}
@@ -2116,11 +2140,23 @@ export default function Home() {
             onDeleteCustom={() => customSectionAction("delete", selectedSection.id)}
             patchSectionState={patchSectionState}
             reportType={reportType}
+            variant={scan.variant}
           />
         </main>
       </div>
       <footer className="app-header" style={{ justifyContent: "flex-end" }}>
         {!allAddressed && <span className="confidence-note">Some sections still need attention.</span>}
+        {scan.fsAvailable && (
+          <span className="variant-switch" title="Calpine reports go out in two versions: the standard report and the shorter Fleet Service (FS) copy">
+            Version:
+            <button type="button" className={scan.variant === "standard" ? "active" : ""} disabled={generating !== null} onClick={() => setVariant("standard")}>
+              Standard
+            </button>
+            <button type="button" className={scan.variant === "fs" ? "active" : ""} disabled={generating !== null} onClick={() => setVariant("fs")}>
+              FS (Fleet Service)
+            </button>
+          </span>
+        )}
         <button className="secondary" disabled={generating !== null} onClick={downloadDeck}>
           {generating === "deck" ? "Building PowerPoint..." : "1. Download PowerPoint"}
         </button>

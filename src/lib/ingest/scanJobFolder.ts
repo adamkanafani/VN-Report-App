@@ -57,6 +57,10 @@ export interface JobScanResult {
   measurements: JobMeasurements;
   fileCount: number;
   sections: SectionScanResult[];
+  /** Which version this scan is for (see ReportTemplate.variant). */
+  variant: "standard" | "fs";
+  /** Whether to offer the FS version at all: a Calpine job, or one with FS copies of its sheets. */
+  fsAvailable: boolean;
 }
 
 const TABLE_PARSERS: Record<string, (path: string) => Promise<ParsedTable | null>> = {
@@ -158,19 +162,24 @@ function formNumberOf(baseName: string): string | undefined {
  * routers list the forms (see RouterFormRef), which is the order APG's real reports print them in;
  * anything the routers don't mention follows by name.
  */
+/** A Fleet Service copy of a sheet: "... FS.pdf" / "... FS.xlsx" / "Serial Number List FS.pdf". */
+const isFs = (f: JobFile) => /[\s_-]fs$/i.test(path.basename(f.baseName, f.ext).trim());
+
 async function scanMultiSection(
   section: SectionConfig,
   files: JobFile[],
   base: Omit<SectionScanResult, "status" | "statusReason" | "matchedFiles">,
-  formOrder: string[]
+  formOrder: string[],
+  variant: "standard" | "fs"
 ): Promise<SectionScanResult> {
   const matched = findCandidates(section.sourceRules, files).flatMap((m) => m.candidates);
   const manual = base.manualAttachments ?? [];
 
-  // Field-service duplicates ("DS-0319 ... INCOMING FS.pdf" beside "DS-0319 ... INCOMING.pdf", Job
-  // 20564) are the same sheet re-exported for a short customer copy of the report -- collapsed into
-  // the standard file, but kept when the FS copy is the only one (his F-306-01 final NDT).
-  const isFs = (f: JobFile) => /[\s_-]fs$/i.test(path.basename(f.baseName, f.ext).trim());
+  // Fleet Service duplicates ("DS-0319 ... INCOMING FS.pdf" beside "DS-0319 ... INCOMING.pdf", Job
+  // 20564) are the same sheet re-exported for Calpine's FS copy of the report -- collapsed into the
+  // file for the version being built (the FS copy for FS, the standard one otherwise), but kept when
+  // a copy is the only one (his F-306-01 final NDT).
+  const wantFs = variant === "fs";
   const stem = (f: JobFile) =>
     path.basename(f.baseName, f.ext).toLowerCase().replace(/[\s_-]+fs$/, "").replace(/\s+/g, " ").trim();
   const seen = new Map<string, JobFile>();
@@ -179,7 +188,7 @@ async function scanMultiSection(
     const existing = seen.get(key);
     const better =
       !existing ||
-      (isFs(existing) && !isFs(f)) ||
+      (isFs(existing) !== wantFs && isFs(f) === wantFs) ||
       (isFs(existing) === isFs(f) && f.relativePath.length < existing.relativePath.length);
     if (better) seen.set(key, f);
   }
@@ -210,6 +219,14 @@ async function scanMultiSection(
   const manualPaths = new Set(manual.map((f) => f.relativePath));
   let pool = candidates.filter((f) => !section.preselectPattern || section.preselectPattern.test(f.baseName));
   if (section.preferPattern && pool.some((f) => section.preferPattern!.test(f.baseName))) pool = pool.filter((f) => section.preferPattern!.test(f.baseName));
+  // NDT: the FS copy prints the F-306-01 form instead of the DS sheet, the standard copy the other
+  // way round (Job 20992: "INCOMING CM2" in the standard report, "F-306-01 NDT Rev 10" in the FS).
+  // Whichever kind is the only one present is used for both (Alfredo's 20564 Final has only an F-306).
+  if (/ndt/i.test(section.id)) {
+    const fsForm = (f: JobFile) => isFs(f) || /^f-?306/i.test(f.baseName);
+    const forVersion = pool.filter((f) => fsForm(f) === wantFs);
+    if (forVersion.length > 0) pool = forVersion;
+  }
   // A workbook of a DS form that's already here as a PDF is a working copy, not another sheet --
   // e.g. 20564's "7A\20564 FA 1ST STG INCOMING\DS-0325 (CJ) ... INCOMING.xlsx" beside the printed
   // "DS-0325 ... INCOMING.pdf" (the inspector's initials make the names differ). Listed, not ticked.
@@ -225,9 +242,12 @@ async function scanMultiSection(
   if (section.selectOne && candidates.length > 0) {
     // One form: a manually attached file wins outright; otherwise PDF over workbook, "INCOMING"
     // over other copies, the report folder (7A) over subfolders, then the shortest path.
+    // The FS copy for the FS version, the standard one otherwise -- even when the two are named
+    // differently ("Serial Number List FS.pdf" vs "DS-0404 (TH) Serial Number List.pdf", Job 20992).
     const score = (f: JobFile) =>
       (manualPaths.has(f.relativePath) ? 0 : 1000) +
       (f.ext === ".pdf" ? 0 : 100) +
+      (isFs(f) === wantFs ? 0 : 50) +
       (/incoming/i.test(f.baseName) ? 0 : 10) +
       (/^7 reports\/7a[^/]*$/i.test(f.folderPath) ? 0 : 5) +
       f.relativePath.length / 1000;
@@ -263,7 +283,14 @@ async function scanMultiSection(
   };
 }
 
-async function scanFileBackedSection(section: SectionConfig, files: JobFile[], jobRoot: string, routers: RouterCache, formOrder: string[]): Promise<SectionScanResult> {
+async function scanFileBackedSection(
+  section: SectionConfig,
+  files: JobFile[],
+  jobRoot: string,
+  routers: RouterCache,
+  formOrder: string[],
+  variant: "standard" | "fs"
+): Promise<SectionScanResult> {
   const base = {
     id: section.id,
     title: section.title,
@@ -282,7 +309,7 @@ async function scanFileBackedSection(section: SectionConfig, files: JobFile[], j
     aliases: section.aliases,
   };
 
-  if (section.generation === "attach-multi") return await scanMultiSection(section, files, base, formOrder);
+  if (section.generation === "attach-multi") return await scanMultiSection(section, files, base, formOrder, variant);
 
   if (section.generation === "llm-vision-select") {
     const folderRules = section.sourceRules.filter((r) => r.kind === "folderPattern");
@@ -551,7 +578,7 @@ export async function scanJobFolder(jobRoot: string, template: ReportTemplate): 
       continue;
     }
     if (section.dependsOnSections) continue; // pass 2
-    resolved.set(section.id, await scanFileBackedSection(section, files, jobRoot, routers, formOrder));
+    resolved.set(section.id, await scanFileBackedSection(section, files, jobRoot, routers, formOrder, template.variant ?? "standard"));
   }
 
   // Pass 2: sections synthesized from other sections' results.
@@ -564,5 +591,6 @@ export async function scanJobFolder(jobRoot: string, template: ReportTemplate): 
   const sections = template.sections.map((s) => resolved.get(s.id)!);
 
   const measurements = await readJobMeasurements(files);
-  return { jobRoot, reportType: template.reportType, metadata, measurements, fileCount: files.length, sections };
+  const fsAvailable = /calpine/i.test(`${path.basename(jobRoot)} ${metadata.customer}`) || files.some(isFs);
+  return { jobRoot, reportType: template.reportType, metadata, measurements, fileCount: files.length, sections, variant: template.variant ?? "standard", fsAvailable };
 }

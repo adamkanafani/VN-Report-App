@@ -95,6 +95,15 @@ export const INCOMING_NDT_RULES: SourceMatchRule[] = [
     excludePattern: /final/i,
     requiredExtensions: [".pdf"],
   },
+  // The F-306-01 NDT form Calpine's Fleet Service copy prints in place of the DS sheet -- kept in
+  // the inspection report folder, not 7D (Job 20992's "7A\F-306-01 NDT Rev 10.pdf").
+  {
+    kind: "filenamePattern",
+    pattern: /^f-?306/i,
+    excludePattern: /^copy of|^~\$/i,
+    folder: /^7 reports\/7a/i,
+    requiredExtensions: [".pdf", ".xlsx", ".xlsm"],
+  },
 ];
 
 export const FINAL_NDT_RULES: SourceMatchRule[] = [
@@ -103,6 +112,14 @@ export const FINAL_NDT_RULES: SourceMatchRule[] = [
     pattern: /final/i,
     excludePattern: /^copy of/i,
     folder: /7d|(^|\/)[^/]*ndt/i,
+    requiredExtensions: [".pdf", ".xlsx", ".xlsm"],
+  },
+  // Its final-stage F-306-01 ("7B\F-306-01 NDT Rev 10.xlsx", Job 20992) -- see INCOMING_NDT_RULES.
+  {
+    kind: "filenamePattern",
+    pattern: /^f-?306/i,
+    excludePattern: /^copy of|^~\$/i,
+    folder: /^7 reports\/7b/i,
     requiredExtensions: [".pdf", ".xlsx", ".xlsm"],
   },
 ];

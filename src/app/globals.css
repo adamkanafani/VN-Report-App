@@ -1845,3 +1845,34 @@ button.generate-report:active:not(:disabled) {
   min-width: 0;
   width: 100%;
 }
+
+/* Standard / FS (Fleet Service) version switch in the footer -- Calpine jobs only. */
+.variant-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #33507a;
+  margin-right: 8px;
+}
+
+.variant-switch button {
+  background: #ffffff;
+  color: #0b3d91;
+  border: 1px solid #0b3d91;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.variant-switch button.active {
+  background: #0b3d91;
+  color: #ffffff;
+}
+
+/* Outranks the global navy button hover, which left the unselected option's navy text unreadable. */
+.variant-switch button:hover:not(:disabled):not(.active) {
+  background: #eaf2fc;
+  color: #0b3d91;
+  box-shadow: none;
+}
