@@ -1901,3 +1901,274 @@ button.add-section-btn:hover:not(:disabled) {
   font-weight: 700;
   letter-spacing: 0.04em;
 }
+
+/* Photo picker (PhotoPagePicker.tsx): the job's photos on the left, the report's photo pages --
+   six slots each, two across and three down like the printed page -- on the right. */
+.photo-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+  outline: none;
+}
+
+.photo-picker-source {
+  min-width: 0;
+}
+
+.photo-filter-tabs {
+  flex-wrap: wrap;
+}
+
+.photo-preview {
+  border: 1px solid #d5e1f2;
+  border-radius: 10px;
+  background: #0f1b2e;
+  overflow: hidden;
+}
+
+.photo-preview img {
+  display: block;
+  width: 100%;
+  height: 380px;
+  object-fit: contain;
+}
+
+.photo-preview-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #f4f8fd;
+}
+
+.photo-preview-bar button {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.photo-preview-bar select {
+  padding: 5px 8px;
+  border: 1px solid #b9cce8;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #0b3d91;
+  background: #ffffff;
+}
+
+.photo-preview-name {
+  flex: 1;
+  min-width: 140px;
+  font-size: 12px;
+  color: #33507a;
+}
+
+.photo-picker-tools {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 6px;
+  font-size: 12px;
+  color: #33507a;
+}
+
+.photo-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 8px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.photo-strip-tile {
+  position: relative;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(11, 61, 145, 0.12);
+}
+
+.photo-strip-tile img {
+  display: block;
+  width: 100%;
+  height: 78px;
+  object-fit: cover;
+}
+
+.photo-strip-tile.used {
+  border-color: #1a7431;
+}
+
+.photo-strip-tile.current {
+  border-color: #0b3d91;
+  box-shadow: 0 0 0 3px rgba(11, 61, 145, 0.25);
+}
+
+/* "Pg 2 · 4" -- where an already-placed photo sits in the report. */
+.photo-slot-badge {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #1a7431;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.photo-picker-pages {
+  position: sticky;
+  top: 0;
+  max-height: 78vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.photo-picker-pages-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: #0b3d91;
+}
+
+.photo-picker-pages-head button {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.photo-group-pages {
+  margin-bottom: 14px;
+}
+
+.photo-group-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0b3d91;
+  margin-bottom: 6px;
+}
+
+.photo-page {
+  border: 1px solid #d5e1f2;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
+.photo-page-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #6a7fa3;
+  margin-bottom: 6px;
+}
+
+.photo-page-slots {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.photo-slot {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  border: 2px dashed #c9d8ee;
+  border-radius: 6px;
+  background: #f7faff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.photo-slot.filled {
+  border-style: solid;
+  border-color: #d5e1f2;
+  cursor: grab;
+}
+
+.photo-slot.current {
+  border-color: #0b3d91;
+}
+
+.photo-slot img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.photo-slot-number {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #0b3d91;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1;
+}
+
+.photo-slot-empty {
+  font-size: 11px;
+  color: #8098bd;
+}
+
+button.photo-slot-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #a4141a;
+  font-size: 11px;
+  box-shadow: none;
+  opacity: 0;
+}
+
+.photo-slot:hover button.photo-slot-remove {
+  opacity: 1;
+}
+
+button.photo-slot-remove:hover:not(:disabled) {
+  background: #a4141a;
+  color: #ffffff;
+}
+
+.photo-picker .photo-filter-tabs {
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+.photo-picker .photo-filter-tab {
+  padding: 4px 11px;
+  font-size: 11px;
+}
+
+/* A narrow window: photos above, report pages below, rather than two cramped columns. */
+@media (max-width: 1100px) {
+  .photo-picker {
+    grid-template-columns: 1fr;
+  }
+
+  .photo-picker-pages {
+    position: static;
+    max-height: none;
+  }
+}

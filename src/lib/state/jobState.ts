@@ -14,8 +14,11 @@ export interface SectionState {
   /** For photo-select sections: the reviewer-confirmed selection. */
   selectedPhotoPaths?: string[];
   /** The same pick per report ("ia" / "final") once the tech rep changes it for that report -- see
-   * photoSelection in selection.ts. */
+   * photoPick in photoGroups.ts. */
   selectedPhotoPathsByReport?: Record<string, string[]>;
+  /** Photos the tech rep moved to a different photo group ("NDT Photos" for a shot the shop saved
+   * under Incoming), by relative path → group title. */
+  photoGroupOverrides?: Record<string, string>;
   /** For the cover section: reviewer overrides/fill-ins for fields with no reliable auto-source
    * (Tech Rep, Customer PO, Prior Repair, Coating, ...), keyed the same as JobMetadata. */
   fields?: Record<string, string>;
@@ -160,27 +163,75 @@ function stateFilePath(jobRoot: string): string {
   return path.join(stateDir(), `${hash}.json`);
 }
 
+/** A job's saved state. Only a job with no file yet starts empty: a file that won't read or parse
+ * (caught mid-write by another save, or held by a virus scan) is retried, then reported -- it used
+ * to come back as a brand-new empty job, which the next save then wrote over every draft, photo
+ * pick and setting the tech rep had (seen on the 20564 test copy, 10/29). */
 export async function loadJobState(jobRoot: string): Promise<JobState> {
   const filePath = stateFilePath(jobRoot);
-  try {
-    const raw = await fs.readFile(filePath, "utf-8");
-    return JSON.parse(raw) as JobState;
-  } catch {
-    return { jobRoot, sections: {} };
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const raw = await fs.readFile(filePath, "utf-8");
+      return JSON.parse(raw) as JobState;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return { jobRoot, sections: {} };
+      lastError = err;
+      await new Promise((r) => setTimeout(r, 100 * (attempt + 1)));
+    }
   }
+  throw new Error(`Couldn't read this job's saved review state (${filePath}): ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
+/** Written to a temporary file and renamed over the old one, so a reader never sees half a file. */
 export async function saveJobState(state: JobState): Promise<void> {
   const filePath = stateFilePath(state.jobRoot);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, JSON.stringify(state, null, 2), "utf-8");
+  const temp = `${filePath}.${process.pid}.${crypto.randomBytes(4).toString("hex")}.tmp`;
+  await fs.writeFile(temp, JSON.stringify(state, null, 2), "utf-8");
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await fs.rename(temp, filePath);
+      return;
+    } catch (err) {
+      // Windows can refuse the replace for a moment while something else has the file open.
+      if (attempt >= 5) {
+        await fs.unlink(temp).catch(() => {});
+        throw err;
+      }
+      await new Promise((r) => setTimeout(r, 50 * (attempt + 1)));
+    }
+  }
 }
 
-export async function updateSectionState(jobRoot: string, sectionId: string, patch: Partial<SectionState>): Promise<JobState> {
-  const state = await loadJobState(jobRoot);
-  state.sections[sectionId] = { ...state.sections[sectionId], ...patch };
-  await saveJobState(state);
-  return state;
+// One change at a time per job: every read-modify-write of a job's state goes through
+// mutateJobState, so two saves landing together (a photo pick and a rescan, say) apply one after the
+// other instead of the later one writing back a copy that's missing the earlier one's change.
+const jobLocks = new Map<string, Promise<unknown>>();
+
+/** Loads the job's state, lets `change` edit it, and saves it -- queued behind any other change to
+ * the same job. */
+export function mutateJobState(jobRoot: string, change: (state: JobState) => void | Promise<void>): Promise<JobState> {
+  const previous = jobLocks.get(jobRoot) ?? Promise.resolve();
+  const run = previous
+    .catch(() => {})
+    .then(async () => {
+      const state = await loadJobState(jobRoot);
+      await change(state);
+      await saveJobState(state);
+      return state;
+    });
+  jobLocks.set(jobRoot, run);
+  run.finally(() => {
+    if (jobLocks.get(jobRoot) === run) jobLocks.delete(jobRoot);
+  }).catch(() => {});
+  return run;
+}
+
+export function updateSectionState(jobRoot: string, sectionId: string, patch: Partial<SectionState>): Promise<JobState> {
+  return mutateJobState(jobRoot, (state) => {
+    state.sections[sectionId] = { ...state.sections[sectionId], ...patch };
+  });
 }
 
 /** Applies patches for several sections in one read-modify-write. Calling `updateSectionState`
@@ -188,20 +239,18 @@ export async function updateSectionState(jobRoot: string, sectionId: string, pat
  * so whichever write lands last wins and silently drops the others. Anything that patches more
  * than one section around the same time (e.g. drafting several sections in parallel) must batch
  * through here instead. */
-export async function updateSectionStates(jobRoot: string, patches: Record<string, Partial<SectionState>>): Promise<JobState> {
-  const state = await loadJobState(jobRoot);
-  for (const [sectionId, patch] of Object.entries(patches)) {
-    state.sections[sectionId] = { ...state.sections[sectionId], ...patch };
-  }
-  await saveJobState(state);
-  return state;
+export function updateSectionStates(jobRoot: string, patches: Record<string, Partial<SectionState>>): Promise<JobState> {
+  return mutateJobState(jobRoot, (state) => {
+    for (const [sectionId, patch] of Object.entries(patches)) {
+      state.sections[sectionId] = { ...state.sections[sectionId], ...patch };
+    }
+  });
 }
 
-export async function updateSectionOrder(jobRoot: string, reportType: string, order: string[]): Promise<JobState> {
-  const state = await loadJobState(jobRoot);
-  state.sectionOrders = { ...state.sectionOrders, [reportType]: order };
-  await saveJobState(state);
-  return state;
+export function updateSectionOrder(jobRoot: string, reportType: string, order: string[]): Promise<JobState> {
+  return mutateJobState(jobRoot, (state) => {
+    state.sectionOrders = { ...state.sectionOrders, [reportType]: order };
+  });
 }
 
 /** This report type's saved section order (see JobState.sectionOrders). */
@@ -214,8 +263,7 @@ export async function updateCustomSections(
   reportType: string,
   update: (sections: Array<{ id: string; title: string }>) => Array<{ id: string; title: string }>
 ): Promise<JobState> {
-  const state = await loadJobState(jobRoot);
-  state.customSections = { ...state.customSections, [reportType]: update(state.customSections?.[reportType] ?? []) };
-  await saveJobState(state);
-  return state;
+  return mutateJobState(jobRoot, (state) => {
+    state.customSections = { ...state.customSections, [reportType]: update(state.customSections?.[reportType] ?? []) };
+  });
 }

@@ -37,12 +37,32 @@ export function photoGroup(folderPath: string): { label: string; rank: number } 
   return { label: `Photos (${partLabel(parts[parts.length - 1] || "Other")})`, rank: 4 };
 }
 
+/** Photos per report page / PowerPoint slide: two across, three down. */
+export const PHOTOS_PER_REPORT_PAGE = 6;
+
+/** Where a group sits in the report, from its title -- for a group a tech rep moved a photo into. */
+export function labelRank(label: string): number {
+  if (/shipping/i.test(label)) return 0;
+  if (/ndt/i.test(label)) return 1;
+  if (/incoming/i.test(label)) return 2;
+  if (/final/i.test(label)) return 3;
+  return 4;
+}
+
+/** A photo's group: the one the tech rep moved it to (a shot the shop filed in the wrong folder),
+ * else the one its folder says. */
+export function photoGroupOf(relativePath: string, overrides?: Record<string, string>): { label: string; rank: number } {
+  const moved = overrides?.[relativePath];
+  if (moved) return { label: moved, rank: labelRank(moved) };
+  const folder = relativePath.includes("/") ? relativePath.slice(0, relativePath.lastIndexOf("/")) : "";
+  return photoGroup(folder);
+}
+
 /** Selected photos (relative paths, in the tech rep's order) grouped into titled runs. */
-export function groupPhotos(paths: string[]): Array<{ label: string; paths: string[] }> {
+export function groupPhotos(paths: string[], overrides?: Record<string, string>): Array<{ label: string; paths: string[] }> {
   const groups = new Map<string, { rank: number; paths: string[] }>();
   for (const relativePath of paths) {
-    const folder = relativePath.includes("/") ? relativePath.slice(0, relativePath.lastIndexOf("/")) : "";
-    const { label, rank } = photoGroup(folder);
+    const { label, rank } = photoGroupOf(relativePath, overrides);
     const g = groups.get(label) ?? { rank, paths: [] };
     g.paths.push(relativePath);
     groups.set(label, g);
@@ -50,7 +70,27 @@ export function groupPhotos(paths: string[]): Array<{ label: string; paths: stri
   return [...groups.entries()].sort((a, b) => a[1].rank - b[1].rank).map(([label, g]) => ({ label, paths: g.paths }));
 }
 
-/** The photos a photo-set section prints: the tech rep's selection, else every candidate. */
-export function selectedPhotoPaths(section: { matchedFiles: Array<{ relativePath: string }> }, selected: string[] | undefined): string[] {
-  return selected && selected.length > 0 ? selected : section.matchedFiles.map((f) => f.relativePath);
+/** The photos a photo section prints for one report, in order (see the photo picker on the review
+ * screen). The report's own pick once the tech rep has made one; the Final's repeated incoming
+ * block otherwise starts from the I&A's pick; then the automatic (AI) pick when there is one.
+ * With none of those, the Final starts with just its shipping photos -- tech reps choose the rest
+ * deliberately -- and the I&A with every photo, as before. Photos no longer in the folder drop out. */
+export function photoPick(
+  section: { id: string; matchedFiles: Array<{ relativePath: string }> },
+  sectionState: { selectedPhotoPaths?: string[]; selectedPhotoPathsByReport?: Record<string, string[]>; photoGroupOverrides?: Record<string, string> } | undefined,
+  reportType: string
+): string[] {
+  const final = /repair|final/i.test(reportType);
+  const exists = new Set(section.matchedFiles.map((f) => f.relativePath));
+  const keep = (paths: string[] | undefined) => paths?.filter((p) => exists.has(p));
+  const own = keep(sectionState?.selectedPhotoPathsByReport?.[final ? "final" : "ia"]);
+  if (own) return own;
+  if (final && section.id === "photoSet") {
+    const ia = keep(sectionState?.selectedPhotoPathsByReport?.ia);
+    if (ia?.length) return ia;
+  }
+  const auto = keep(sectionState?.selectedPhotoPaths);
+  if (auto?.length) return auto;
+  const all = section.matchedFiles.map((f) => f.relativePath);
+  return final ? all.filter((p) => photoGroupOf(p, sectionState?.photoGroupOverrides).rank === 0) : all;
 }

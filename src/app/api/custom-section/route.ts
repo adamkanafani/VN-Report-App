@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { resolveReportTemplate } from "@/lib/report-templates";
-import { loadJobState, saveJobState, updateCustomSections } from "@/lib/state/jobState";
+import { mutateJobState, updateCustomSections } from "@/lib/state/jobState";
 
 /** Add / rename / delete a tech-rep-added section on one job's report (see JobState.customSections).
  * Deleting only drops the section from the report -- any files attached to it stay in the job
@@ -24,12 +24,12 @@ export async function POST(request: NextRequest) {
   // A built-in section's divider title for this job (see JobState.sectionTitles) -- a blank title
   // goes back to the standard one.
   if (action === "retitle") {
-    const state = await loadJobState(jobRoot);
-    const titles = { ...state.sectionTitles?.[template.reportType] };
-    if (cleanTitle) titles[id!] = cleanTitle;
-    else delete titles[id!];
-    state.sectionTitles = { ...state.sectionTitles, [template.reportType]: titles };
-    await saveJobState(state);
+    await mutateJobState(jobRoot, (state) => {
+      const titles = { ...state.sectionTitles?.[template.reportType] };
+      if (cleanTitle) titles[id!] = cleanTitle;
+      else delete titles[id!];
+      state.sectionTitles = { ...state.sectionTitles, [template.reportType]: titles };
+    });
     const standard = template.sections.find((s) => s.id === id)?.title ?? cleanTitle;
     return NextResponse.json({ section: { id, title: cleanTitle || standard } });
   }

@@ -1,6 +1,6 @@
 import path from "path";
 import type { JobScanResult } from "../ingest/scanJobFolder";
-import { loadJobState, saveJobState, updateSectionStates, type JobState, type SectionState } from "../state/jobState";
+import { loadJobState, mutateJobState, updateSectionStates, type JobState, type SectionState } from "../state/jobState";
 import type { ReportTemplate } from "../report-templates/types";
 import { sectionForTitle, titleKey } from "../report-templates/titles";
 import {
@@ -83,37 +83,37 @@ const KNOWN_COVER_LABELS = new Set(
  * Aguirre's vane decks (20381, 20387, 19820, 19714, 19886, 19608, 19168) vs Alfredo's 20564.
  */
 async function seedLayout(scan: JobScanResult, template: ReportTemplate, prior: PriorDraft | null): Promise<void> {
-  const state = await loadJobState(scan.jobRoot);
-  const rt = template.reportType;
-  if (state.layoutSeeded?.[rt]) return;
-  state.layoutSeeded = { ...state.layoutSeeded, [rt]: prior ? `Job ${prior.source.jobNumber}` : "none" };
-  if (prior) {
-    const titles: Record<string, string> = { ...state.sectionTitles?.[rt] };
-    for (const divider of prior.dividers) {
-      const section = sectionForTitle(template.sections.filter((s) => s.divider), divider);
-      if (!section) continue;
-      if (titleKey(divider) !== titleKey(section.title) || divider !== section.title) titles[section.id] ??= divider;
-      // An optional block the last report included starts out included here too.
-      if (section.defaultExcluded && state.sections[section.id]?.excludeFromReport === undefined) {
-        state.sections[section.id] = { ...state.sections[section.id], excludeFromReport: false };
+  await mutateJobState(scan.jobRoot, (state) => {
+    const rt = template.reportType;
+    if (state.layoutSeeded?.[rt]) return;
+    state.layoutSeeded = { ...state.layoutSeeded, [rt]: prior ? `Job ${prior.source.jobNumber}` : "none" };
+    if (prior) {
+      const titles: Record<string, string> = { ...state.sectionTitles?.[rt] };
+      for (const divider of prior.dividers) {
+        const section = sectionForTitle(template.sections.filter((s) => s.divider), divider);
+        if (!section) continue;
+        if (titleKey(divider) !== titleKey(section.title) || divider !== section.title) titles[section.id] ??= divider;
+        // An optional block the last report included starts out included here too.
+        if (section.defaultExcluded && state.sections[section.id]?.excludeFromReport === undefined) {
+          state.sections[section.id] = { ...state.sections[section.id], excludeFromReport: false };
+        }
       }
-    }
-    state.sectionTitles = { ...state.sectionTitles, [rt]: titles };
+      state.sectionTitles = { ...state.sectionTitles, [rt]: titles };
 
-    const cover = { ...state.sections.cover };
-    const eqLabel = prior.coverLabels.find((l) => /^(eq|asset)\s*#?$/i.test(l.trim()));
-    if (eqLabel && !cover.fieldLabels?.assetNumber) cover.fieldLabels = { ...cover.fieldLabels, assetNumber: eqLabel.replace(/\s+/g, "") };
-    const existing = new Set((cover.customFields ?? []).map((f) => f.label.toLowerCase().replace(/\s+/g, "")));
-    const extra = prior.coverLabels.filter((l) => {
-      const k = l.toLowerCase().replace(/\s+/g, "").replace(/:$/, "");
-      return !KNOWN_COVER_LABELS.has(k) && !existing.has(k);
-    });
-    if (extra.length > 0) {
-      cover.customFields = [...(cover.customFields ?? []), ...extra.map((label) => ({ id: `seed-${label.replace(/[^A-Za-z0-9]/g, "")}`, label, value: "" }))];
+      const cover = { ...state.sections.cover };
+      const eqLabel = prior.coverLabels.find((l) => /^(eq|asset)\s*#?$/i.test(l.trim()));
+      if (eqLabel && !cover.fieldLabels?.assetNumber) cover.fieldLabels = { ...cover.fieldLabels, assetNumber: eqLabel.replace(/\s+/g, "") };
+      const existing = new Set((cover.customFields ?? []).map((f) => f.label.toLowerCase().replace(/\s+/g, "")));
+      const extra = prior.coverLabels.filter((l) => {
+        const k = l.toLowerCase().replace(/\s+/g, "").replace(/:$/, "");
+        return !KNOWN_COVER_LABELS.has(k) && !existing.has(k);
+      });
+      if (extra.length > 0) {
+        cover.customFields = [...(cover.customFields ?? []), ...extra.map((label) => ({ id: `seed-${label.replace(/[^A-Za-z0-9]/g, "")}`, label, value: "" }))];
+      }
+      state.sections.cover = cover;
     }
-    state.sections.cover = cover;
-  }
-  await saveJobState(state);
+  });
 }
 
 const seededLabel = (prior: PriorDraft) => `Job ${prior.source.jobNumber} (${path.basename(prior.source.file)})`;

@@ -4,9 +4,9 @@ import sharp from "sharp";
 import type { JobScanResult, SectionScanResult } from "../ingest/scanJobFolder";
 import { COVER_FIELD_ORDER } from "../ingest/jobMetadata";
 import { applySectionOrder, sectionOrderFor, type JobState, type SectionState } from "../state/jobState";
-import { effectiveMultiSelection, isExcluded, photoSelection } from "../state/selection";
+import { effectiveMultiSelection, isExcluded } from "../state/selection";
 import { excelExhibitToPdf } from "./excelExhibit";
-import { groupPhotos, selectedPhotoPaths } from "./photoGroups";
+import { groupPhotos, photoPick, PHOTOS_PER_REPORT_PAGE } from "./photoGroups";
 import { applyTableEdits, type ParsedTable } from "../ingest/parsers/types";
 
 // APG's real letterhead colors, sampled directly from a completed report (Job #20443): a short
@@ -170,21 +170,25 @@ async function photoToDataUri(absolutePath: string): Promise<string> {
 /** One page run per photo group (see photoGroup), each under its own letterhead title, photos in
  * the tech rep's selected order within a group. */
 async function renderPhotoPages(section: SectionScanResult, jobRoot: string, sectionState: SectionState | undefined, logo: string, reportType: string): Promise<string> {
-  const paths = selectedPhotoPaths(section, photoSelection(sectionState, reportType));
+  const paths = photoPick(section, sectionState, reportType);
   if (paths.length === 0) return `<section class="report-page">${pageHeader(section.title, logo)}<p class="missing">No photos selected.</p></section>`;
 
+  // Six to a page, two across and three down, each page under its group's title -- the same pages
+  // the tech rep laid out in the photo picker and the same layout as the PowerPoint photo slides.
   const pages: string[] = [];
-  for (const { label, paths: group } of groupPhotos(paths)) {
-    const images = await Promise.all(
-      group.map(async (relativePath) => {
-        try {
-          return `<figure><img src="${await photoToDataUri(path.join(jobRoot, relativePath))}" /></figure>`;
-        } catch {
-          return "";
-        }
-      })
-    );
-    pages.push(`<section class="report-page">${pageHeader(label, logo)}<div class="photo-grid">${images.join("")}</div></section>`);
+  for (const { label, paths: group } of groupPhotos(paths, sectionState?.photoGroupOverrides)) {
+    for (let i = 0; i < group.length; i += PHOTOS_PER_REPORT_PAGE) {
+      const images = await Promise.all(
+        group.slice(i, i + PHOTOS_PER_REPORT_PAGE).map(async (relativePath) => {
+          try {
+            return `<figure><img src="${await photoToDataUri(path.join(jobRoot, relativePath))}" /></figure>`;
+          } catch {
+            return "<figure></figure>";
+          }
+        })
+      );
+      pages.push(`<section class="report-page">${pageHeader(label, logo)}<div class="photo-page-grid">${images.join("")}</div></section>`);
+    }
   }
   return pages.join("\n");
 }
@@ -318,6 +322,9 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
   .form-notes-label { font-weight: 700; text-decoration: underline; font-size: 10px; }
   .form-notes-text { margin-top: 4px; font-size: 11px; white-space: pre-wrap; }
   .photo-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+  .photo-page-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: repeat(3, 280px); gap: 12px; }
+  .photo-page-grid figure { margin: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .photo-page-grid img { max-width: 100%; max-height: 100%; object-fit: contain; }
   .photo-grid figure { width: 30%; margin: 0; }
   .photo-grid img { width: 100%; height: auto; border: 1px solid #ccc; }
   .photo-grid figcaption { font-size: 8px; color: #555; word-break: break-all; }

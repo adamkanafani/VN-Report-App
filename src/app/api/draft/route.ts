@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
     const newState = await updateSectionState(jobRoot, sectionId, {
       ...(fsText ? { compactContent: content } : { content }),
       selectedPhotoPaths,
-      // A fresh photo pick replaces this report's own pick too (see photoSelection).
+      // A fresh photo pick replaces this report's own pick too (see photoPick in photoGroups.ts).
       ...(selectedPhotoPaths && {
         selectedPhotoPathsByReport: { ...jobState.sections[sectionId]?.selectedPhotoPathsByReport, [reportKey(reportType ?? "ia")]: selectedPhotoPaths },
       }),
