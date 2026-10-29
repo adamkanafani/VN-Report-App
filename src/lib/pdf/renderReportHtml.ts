@@ -4,7 +4,7 @@ import sharp from "sharp";
 import type { JobScanResult, SectionScanResult } from "../ingest/scanJobFolder";
 import { COVER_FIELD_ORDER } from "../ingest/jobMetadata";
 import { applySectionOrder, sectionOrderFor, type JobState, type SectionState } from "../state/jobState";
-import { effectiveMultiSelection, isExcluded } from "../state/selection";
+import { effectiveMultiSelection, isExcluded, photoSelection } from "../state/selection";
 import { excelExhibitToPdf } from "./excelExhibit";
 import { groupPhotos, selectedPhotoPaths } from "./photoGroups";
 import { applyTableEdits, type ParsedTable } from "../ingest/parsers/types";
@@ -169,8 +169,8 @@ async function photoToDataUri(absolutePath: string): Promise<string> {
 
 /** One page run per photo group (see photoGroup), each under its own letterhead title, photos in
  * the tech rep's selected order within a group. */
-async function renderPhotoPages(section: SectionScanResult, jobRoot: string, sectionState: SectionState | undefined, logo: string): Promise<string> {
-  const paths = selectedPhotoPaths(section, sectionState?.selectedPhotoPaths);
+async function renderPhotoPages(section: SectionScanResult, jobRoot: string, sectionState: SectionState | undefined, logo: string, reportType: string): Promise<string> {
+  const paths = selectedPhotoPaths(section, photoSelection(sectionState, reportType));
   if (paths.length === 0) return `<section class="report-page">${pageHeader(section.title, logo)}<p class="missing">No photos selected.</p></section>`;
 
   const pages: string[] = [];
@@ -239,10 +239,16 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
      could end up above step 8). auto fills the left column all the way down first, the way the
      steps are actually meant to be read, and only starts the right column once the left one is
      genuinely full. */
-  .repairs-columns { column-count: 2; column-gap: 28px; column-fill: auto; }
-  /* 16px (was 13px) per tech rep feedback -- closer to the summaries' size so everything looks
-     consistent, while still fitting a typical list on one page in two columns. */
-  .repairs-columns p, .repairs-columns li { font-size: 16px; line-height: 1.35; margin: 0 0 5px; break-inside: avoid; }
+  /* One column at the summaries' own size, like the V&N team's real reports (Job 20992): a long
+     list continues onto the next page rather than being squeezed into two columns or a smaller
+     font. A bullet never splits across the page break. */
+  .repairs-columns li, .repairs-columns p { break-inside: avoid; }
+  section.narrative-section { page-break-inside: auto; }
+  .narrative-section li { break-inside: avoid; }
+  /* The table that repeats a narrative page's letterhead on each page it runs onto (see
+     renderReportSegments) -- no borders or padding of its own. */
+  table.page-frame { margin: 0; border-collapse: collapse; }
+  table.page-frame > thead > tr > td, table.page-frame > tbody > tr > td { border: none; padding: 0; font-size: inherit; }
   /* Divider page ahead of a block of appended exhibits (see dividerPage) -- the section title large
      and centered on an otherwise empty page, like the divider slides in APG's own V&N decks. */
   .divider-page { min-height: 900px; }
@@ -280,11 +286,13 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
      breathing room between each line on the cover page. */
   .cover-row { display: flex; gap: 32px; padding: 18px 0; font-size: 24px; page-break-inside: avoid; }
   .cover-label { width: 250px; flex-shrink: 0; color: #6a6a6a; font-weight: 700; }
-  .cover-value { font-weight: 700; color: #1a1a1a; }
+  /* pre-line: multi-line values (serial numbers three to a line) break where the tech rep broke them. */
+  .cover-value { font-weight: 700; color: #1a1a1a; white-space: pre-line; }
   /* The cover's second page (see renderReportSegments -- everything after "Tech Rep" always
      starts a fresh page, per tech rep feedback) reuses .cover for identical centering/typography
      but skips the top padding and doesn't repeat the logo/title. */
-  .cover-continued { padding-top: 60px; }
+  .cover-continued { padding-top: 0; text-align: left; }
+  .cover-continued .cover-fields { margin-top: 30px; }
 
   table { border-collapse: collapse; width: 100%; margin-top: 8px; }
   th, td { border: 1px solid #ccc; padding: 3px 6px; font-size: 9px; }
@@ -484,6 +492,7 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
   if (page2.length > 0) {
     bodyParts.push(`
       <section class="cover cover-continued report-page">
+        ${pageHeader(scan.reportType, logo)}
         <div class="cover-fields">${coverRowsHtml(page2)}</div>
       </section>`);
   }
@@ -497,8 +506,7 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
     if (section.generation === "llm-narrative") {
       const narrativeHtml = renderNarrative(contentFor(id));
       // Repair Recommendations / Repair Summary are a lead-in line ("APG recommends the following
-      // repairs:") over a long list of short step labels -- the lead-in stays full width, the list
-      // flows into two columns (see .repairs-columns) so a routine 20-40 step list fits a page.
+      // repairs:") over a long list of short step labels, one column (see .repairs-columns).
       const isRepairList = REPAIR_LIST_SECTIONS.has(id);
       let body = narrativeHtml;
       if (isRepairList) {
@@ -506,13 +514,18 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
         body = leadIn?.trim().endsWith(":") ? `<p>${escapeHtml(leadIn.trim())}</p><div class="repairs-columns">${renderNarrative(rest.join("\n"))}</div>` : `<div class="repairs-columns">${narrativeHtml}</div>`;
       }
       const sectionClass = ["report-page", "narrative-section", isRepairList && "repairs-section"].filter(Boolean).join(" ");
-      bodyParts.push(`<section class="${sectionClass}">${pageHeader(section.title, logo)}${body}</section>`);
+      // The header sits in a <thead> so Chrome repeats it on every page the text runs onto -- a
+      // long summary or repair list continues on the next page under the same letterhead, the
+      // way the tech reps' own reports do, instead of shrinking to fit.
+      bodyParts.push(
+        `<section class="${sectionClass}"><table class="page-frame"><thead><tr><td>${pageHeader(section.title, logo)}</td></tr></thead><tbody><tr><td>${body}</td></tr></tbody></table></section>`
+      );
       continue;
     }
 
     if (section.generation === "llm-vision-select") {
       if (section.divider) bodyParts.push(dividerPage(section.title, logo));
-      bodyParts.push(await renderPhotoPages(section, scan.jobRoot, state.sections[id], logo));
+      bodyParts.push(await renderPhotoPages(section, scan.jobRoot, state.sections[id], logo, scan.reportType));
       continue;
     }
 

@@ -56,11 +56,20 @@ function receivedPhrase(metadata: JobMetadata): { subject: string; plural: boole
   const { isVane } = classifyPart(metadata);
   const qty = Number(metadata.quantity);
   const knownQty = metadata.quantity !== "" && Number.isFinite(qty) && qty > 0;
-  const component = (metadata.component || metadata.part).toLowerCase();
+  // Lower case except tokens with digits ("CM2", "S1N") -- "W501F CM2 row 1 compressor diaphragm".
+  const component = (metadata.component || metadata.part)
+    .split(/\s+/)
+    .map((w) => (/\d/.test(w) && !/^\d+(st|nd|rd|th)$/i.test(w) ? w.toUpperCase() : w.toLowerCase()))
+    .join(" ");
   const model = metadata.turbineModel && !component.toUpperCase().includes(metadata.turbineModel) ? `${metadata.turbineModel} ` : "";
   if (isVane) {
     const subject = knownQty ? `${numberWords(qty)} (${qty}) ${model}${component}` : `a set of ${model}${component}`;
     return { subject, plural: !knownQty || qty !== 1, noun: "vanes" };
+  }
+  // Anything that isn't a nozzle (a compressor diaphragm, Job 20992) is named by its own last word.
+  if (!/nozzle/.test(component)) {
+    const noun = component.split(" ").pop() || "part";
+    return { subject: `a ${model}${component}`, plural: false, noun };
   }
   const singular = component.replace(/nozzles?\b/, "nozzle");
   if (!knownQty || qty === 1) return { subject: `a ${model}${singular}`, plural: false, noun: "nozzle" };
@@ -249,8 +258,13 @@ const PAST_TENSE: Record<string, string> = {
 };
 // Words that sit in front of the real verb ("Weld build", "Hand blend", "Final assemble",
 // "Grit blast", "Heat treat" -- where "treat" is the verb).
-const VERB_PREFIXES = new Set(["weld", "hand", "final", "grit", "heat", "wire", "dust", "weld/blend", "re-", "post", "pre"]);
-const EXTRA_PAST: Record<string, string> = { treat: "treated", tint: "tinted", "repair/blend": "repaired/blended" };
+// Adan's diaphragm lists (Job 20992) add "Stitch weld", "Light blast clean", "Glass bead",
+// "Shim rings ... and tie down", "Set up ... and perform".
+const VERB_PREFIXES = new Set(["weld", "hand", "final", "grit", "heat", "wire", "dust", "weld/blend", "re-", "post", "pre", "stitch", "light", "glass", "plug", "spot"]);
+const EXTRA_PAST: Record<string, string> = {
+  treat: "treated", tint: "tinted", "repair/blend": "repaired/blended", bead: "beaded", set: "set", shim: "shimmed", tie: "tied",
+  plug: "plugged", fixture: "fixtured", stress: "stressed",
+};
 
 function pastOf(word: string): string | undefined {
   const lower = word.toLowerCase();
@@ -265,6 +279,8 @@ export function toPastTense(step: string): string {
   let i = 0;
   if (VERB_PREFIXES.has(words[0].toLowerCase()) && words[1] && pastOf(words[1])) i = 1;
   else if (!pastOf(words[0])) return step;
+  // "Light blast clean" → "Light blast cleaned": in "blast clean" the verb is "clean".
+  if (/^blast$/i.test(words[i]) && /^clean$/i.test(words[i + 1] ?? "")) i += 1;
   words[i] = pastOf(words[i])!;
   // A second verb joined by "and" ("... assembly and verify dimensions").
   for (let j = i + 1; j < words.length - 1; j++) {

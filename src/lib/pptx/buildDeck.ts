@@ -6,6 +6,7 @@ import type { JobScanResult, SectionScanResult } from "../ingest/scanJobFolder";
 import type { JobState } from "../state/jobState";
 import { coverPages, hasExhibits, REPAIR_LIST_SECTIONS, reportSections } from "../pdf/renderReportHtml";
 import { groupPhotos, selectedPhotoPaths } from "../pdf/photoGroups";
+import { photoSelection } from "../state/selection";
 import { productKeyFor } from "../draft/priorReport";
 import { toLongPath } from "../util/longPath";
 
@@ -207,7 +208,7 @@ function addDivider(pptx: Pptx, title: string) {
 }
 
 async function addPhotoSlides(pptx: Pptx, section: SectionScanResult, scan: JobScanResult, state: JobState) {
-  const paths = selectedPhotoPaths(section, state.sections[section.id]?.selectedPhotoPaths);
+  const paths = selectedPhotoPaths(section, photoSelection(state.sections[section.id], scan.reportType));
   for (const group of groupPhotos(paths)) {
     for (let i = 0; i < group.paths.length; i += PHOTO_SLOTS.length) {
       const slide = pptx.addSlide({ masterName: "APG_CONTENT" });
@@ -273,7 +274,7 @@ export async function buildDeck(scan: JobScanResult, state: JobState): Promise<B
       continue;
     }
     if (section.generation === "llm-vision-select") {
-      if (selectedPhotoPaths(section, state.sections[section.id]?.selectedPhotoPaths).length === 0) continue;
+      if (selectedPhotoPaths(section, photoSelection(state.sections[section.id], scan.reportType)).length === 0) continue;
       if (section.divider) addDivider(pptx, section.title);
       await addPhotoSlides(pptx, section, scan, state);
       continue;

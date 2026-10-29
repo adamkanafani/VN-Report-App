@@ -19,7 +19,21 @@ export interface ProductKey {
   /** "support-ring" (inner support rings -- Alfredo's) and "vane-carrier" (GT11 vane carriers --
    * Adan's and Elmer's) are their own products: drafted only from earlier reports of the same kind,
    * never from nozzle or vane reports. */
-  kind: "nozzle" | "vane" | "support-ring" | "vane-carrier";
+  /** Any other part Adan and Elmer report on ("compressor diaphragm", Job 20992) is keyed by its own
+   * name, so it drafts only from earlier reports of that same part. */
+  kind: "nozzle" | "vane" | "support-ring" | "vane-carrier" | `part:${string}`;
+}
+
+/** "CM2 ROW 1 COMPRESSOR DIAPHRAGM" → "compressor diaphragm": the part's words once the model,
+ * row / stage and code tokens ("CM2", "R1") are dropped. */
+function otherPartName(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\b(row|stage|r)\s*\d\b|\b\d+(st|nd|rd|th)\b|\(qty\s*\d+\)|\beq\s*#?\s*\d+/g, " ")
+    .split(/\s+/)
+    .filter((w) => w && !/\d/.test(w) && !/^(first|second|third|fourth|fifth|set|of|qty)$/.test(w))
+    .map((w) => w.replace(/s$/, ""))
+    .join(" ");
 }
 
 /** "F7EA" / "7EA" → "F7EA", "6B" → "F6B", "W501D5A" / "501D5" / "D5A" → "501D5", "W501F" → "501F",
@@ -40,6 +54,7 @@ export function productKeyFor(metadata: Pick<JobMetadata, "turbineModel" | "part
   // Order matters: "1ST STAGE NOZZLE INNER SUPPORT RING" is a support ring, not a nozzle; "VANE
   // CARRIER" (also misspelled "VAVE CARRIER", Job 18177) is a carrier, not vanes. Other carriers
   // (combustor tile carriers, carrier heat shields, stator carrier rings) aren't V&N report parts.
+  const other = otherPartName(metadata.part);
   const kind: ProductKey["kind"] | null = /support\s*ring/i.test(text)
     ? "support-ring"
     : /va[nv]e\s*carrier/i.test(text)
@@ -50,7 +65,9 @@ export function productKeyFor(metadata: Pick<JobMetadata, "turbineModel" | "part
           ? "vane"
           : /nozzle/i.test(text)
             ? "nozzle"
-            : null;
+            : other
+              ? `part:${other}`
+              : null;
   if (!kind) return null;
   // A support ring is always the 1st-stage ring -- its stage words don't distinguish anything. A
   // carrier's row ("ROW 1 VANE CARRIER SEGMENTS") does; a whole carrier has none.
@@ -167,11 +184,26 @@ export async function findPriorReport(jobRoot: string, metadata: JobMetadata, ki
   return null;
 }
 
+/** This job's own finished deck of the given kind -- for the Repair Report, the job's I&A deck in
+ * "7A Inspection Report": its cover is the tech rep's corrected one (customer site, PO, serials,
+ * material, coating, boxes) and its recommendations are what the Repair Summary restates in the
+ * past tense (Job 20992). Same pick rules as findPriorReport. */
+export async function findOwnReport(jobRoot: string, jobNumber: string, kind: "ia" | "repair"): Promise<PriorReport | null> {
+  const dir = path.join(jobRoot, REPORT_DIRS[kind]);
+  const names = await fs.readdir(toLongPath(dir)).catch(() => [] as string[]);
+  const deck = names
+    .filter((n) => /\.pptx$/i.test(n) && REPORT_NAME[kind].test(n) && !/^~\$|^copy of|[\s_-]fs\.pptx$|- copy/i.test(n))
+    .sort((a, b) => deckRank(a) - deckRank(b) || a.length - b.length)[0];
+  return deck ? { jobNumber, jobFolderName: path.basename(jobRoot), file: path.join(dir, deck) } : null;
+}
+
 /** What a past report deck contributes to a new job's drafts. */
 export interface PriorDraft {
   source: PriorReport;
   engineeringSummary?: string;
   repairRecommendations?: string;
+  /** The shorter Fleet Service list, when the deck has both (see splitRecommendations). */
+  repairRecommendationsCompact?: string;
   repairSummary?: string;
   /** Cover / component-details label → value, e.g. "Tech Rep" → "Alfredo Resendiz T.". */
   coverFields: Record<string, string>;
@@ -179,6 +211,54 @@ export interface PriorDraft {
   coverLabels: string[];
   /** Divider slide titles in deck order ("Serial Number List", "Flow Test", ...). */
   dividers: string[];
+  /** The two cover slides' values keyed by this app's cover field keys (customer, detailsCustomer,
+   * serialNumbers, coating, ...), multi-line values kept as lines. */
+  coverValues: Record<string, string>;
+}
+
+const COVER_KEY_FOR_LABEL: Record<string, string> = {
+  customerpo: "customerPO", po: "customerPO", eq: "assetNumber", asset: "assetNumber", unit: "unit", parttype: "part",
+  techrep: "techRep", turbinemodel: "turbineModel", component: "component", serials: "serialNumbers", serial: "serialNumbers",
+  serialnumbers: "serialNumbers", partnumbers: "partNumbers", partnumber: "partNumbers", quantity: "quantity", qty: "quantity",
+  material: "material", coating: "coating", priorrepair: "priorRepair", priorrepairs: "priorRepair", priorhours: "hours",
+  priorstarts: "starts", boxes: "boxes", incomingofboxes: "boxes",
+};
+
+/** The cover slides (the first slides with a "Customer:" row), read label by label. A paragraph
+ * with no label continues the one above it on a new line ("TW68353, TW68354, TW57210" under
+ * "Serial #'s:", "(New crate needed)" under "Boxes:"). "Customer" on the second slide is the
+ * component-details page's own customer; an "EQ#: …" tacked onto the PO line is the asset #. */
+function coverValues(slides: DeckSlide[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  const covers = slides.slice(0, 5).filter((s) => !s.hidden && /customer\s*:/i.test(s.text)).slice(0, 2);
+  covers.forEach((slide, slideIndex) => {
+    const shapes = [...slide.shapes].sort((a, b) => a.y - b.y || a.x - b.x);
+    for (const shape of shapes) {
+      let current: string | null = null;
+      for (const p of shape.paragraphs) {
+        const raw = p.text.replace(/ /g, " ");
+        if (!raw.trim()) continue;
+        const m = raw.match(/^\s*([A-Za-z][A-Za-z #'’/.]{0,24}?)\s*:\s*(.*)$/) ?? raw.match(/^\s*([A-Za-z][A-Za-z #'’/.]{0,24}?)\s*\t+\s*(.*)$/);
+        const labelKey = m ? m[1].toLowerCase().replace(/[^a-z]/g, "") : "";
+        const key = labelKey === "customer" ? (slideIndex === 0 ? "customer" : "detailsCustomer") : COVER_KEY_FOR_LABEL[labelKey];
+        if (m && key) {
+          let value = clean(m[2]);
+          const eq = value.match(/^(.*?)\s*\b(?:EQ|Asset)\s*#\s*:?\s*(\d{5,})\s*$/i);
+          if (eq) {
+            value = eq[1];
+            out.assetNumber ??= eq[2];
+          }
+          current = key;
+          if (value && !out[key]) out[key] = value;
+        } else if (m && labelKey) {
+          current = null; // a label this app has no field for ("APG Job #", "Date")
+        } else if (current && out[current]) {
+          out[current] += `\n${clean(raw)}`;
+        }
+      }
+    }
+  });
+  return out;
 }
 
 const clean = (s: string) => s.replace(/\t+/g, " ").replace(/\s+/g, " ").trim();
@@ -261,15 +341,29 @@ function dividerTitles(slides: DeckSlide[]): string[] {
     .filter((t) => !/(incoming|repair)\s*report$|engineering summary|recommendation|repair summary/i.test(t));
 }
 
+/** Adan's Calpine decks carry two Repair Recommendations slides -- the full list, then the shorter
+ * Fleet Service one (Job 20992: 28 vs 23 lines) -- each opening "APG recommends the following
+ * repairs:". Split them: the longer is the standard list, the shorter the compact one. */
+function splitRecommendations(markup: string | undefined): { standard?: string; compact?: string } {
+  if (!markup) return {};
+  const blocks = markup.split(/\n+(?=APG recommends)/i).map((b) => b.trim()).filter(Boolean);
+  if (blocks.length < 2) return { standard: markup };
+  const [a, b] = blocks;
+  return a.length >= b.length ? { standard: a, compact: b } : { standard: b, compact: a };
+}
+
 export async function readPriorDraft(prior: PriorReport): Promise<PriorDraft> {
   const slides = await readDeck(await fs.readFile(toLongPath(prior.file)));
+  const recs = splitRecommendations(sectionMarkup(slides, /repair\s*recommendation/i));
   return {
     source: prior,
     engineeringSummary: sectionMarkup(slides, /engineering\s*summary/i),
-    repairRecommendations: sectionMarkup(slides, /repair\s*recommendation/i),
+    repairRecommendations: recs.standard,
+    repairRecommendationsCompact: recs.compact,
     repairSummary: sectionMarkup(slides, /repair\s*summary/i),
     coverFields: coverFields(slides),
     coverLabels: coverLabels(slides),
     dividers: dividerTitles(slides),
+    coverValues: coverValues(slides),
   };
 }

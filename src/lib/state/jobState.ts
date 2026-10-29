@@ -8,6 +8,9 @@ export interface SectionState {
   content?: string;
   /** For photo-select sections: the reviewer-confirmed selection. */
   selectedPhotoPaths?: string[];
+  /** The same pick per report ("ia" / "final") once the tech rep changes it for that report -- see
+   * photoSelection in selection.ts. */
+  selectedPhotoPathsByReport?: Record<string, string[]>;
   /** For the cover section: reviewer overrides/fill-ins for fields with no reliable auto-source
    * (Tech Rep, Customer PO, Prior Repair, Coating, ...), keyed the same as JobMetadata. */
   fields?: Record<string, string>;

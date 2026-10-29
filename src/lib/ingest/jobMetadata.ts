@@ -3,7 +3,7 @@ import { loadWorkbook, cellText } from "./excel";
 import type { JobFile } from "./fileWalk";
 import { findCandidates } from "./matchSource";
 import { parseRouter } from "./parsers/router";
-import { readSerialListFrame } from "./parsers/serialNumberList";
+import { parseSerialNumberList, readSerialListFrame } from "./parsers/serialNumberList";
 import { IA_ROUTER_RULES, REPAIR_ROUTER_RULES, SERIAL_LIST_RULES } from "../report-templates/vn-rules";
 
 export interface JobMetadata {
@@ -24,6 +24,9 @@ export interface JobMetadata {
   turbineOEM: string;
   turbineModel: string;
   component: string;
+  /** "TW57209, TW68351, TW68352" three to a line -- printed on the component-details page when a
+   * part has only a handful of serialized pieces (Adan's diaphragm covers, Job 20992). */
+  serialNumbers: string;
   partNumbers: string;
   material: string;
   coating: string;
@@ -50,6 +53,7 @@ export const COVER_FIELD_ORDER: Array<{ key: keyof JobMetadata; label: string; u
   { key: "detailsCustomer", label: "Customer", uiLabel: "Customer (page 2)" },
   { key: "turbineModel", label: "Turbine Model" },
   { key: "component", label: "Component" },
+  { key: "serialNumbers", label: "Serial #’s" },
   { key: "partNumbers", label: "Part Numbers" },
   { key: "quantity", label: "Quantity" },
   { key: "material", label: "Material" },
@@ -70,6 +74,7 @@ const BLANK: Omit<JobMetadata, "jobNumber" | "customer" | "part" | "quantity" | 
   turbineOEM: "",
   turbineModel: "",
   component: "",
+  serialNumbers: "",
   partNumbers: "",
   material: "",
   coating: "",
@@ -170,8 +175,19 @@ async function parseJobTag(absolutePath: string): Promise<Partial<JobMetadata> |
   }
   if (!fields["job:"]) return null;
   const result: Partial<JobMetadata> = { jobNumber: fields["job:"] };
-  if (fields["cust:"]) result.customer = fields["cust:"];
-  if (fields["part:"]) result.part = fields["part:"];
+  // Calpine tags carry the asset number in the customer line ("CALPINE  EQ# 10956713") and the
+  // unit ahead of the part ("ST-GT2 501F CM2 ROW 1 ...") -- Job 20992. Split both back out.
+  const cust = fields["cust:"] ?? "";
+  const eq = cust.match(/\s*\bEQ\s*#?\s*(\d{5,})/i);
+  if (eq) result.assetNumber = eq[1];
+  if (cust) result.customer = cust.replace(/\s*\bEQ\s*#?\s*\d{5,}/i, "").trim();
+  if (fields["part:"]) {
+    const words = fields["part:"].trim().split(/\s+/);
+    const unit: string[] = [];
+    while (words.length > 1 && UNIT_TOKEN.test(words[0])) unit.push(words.shift()!);
+    result.part = words.join(" ");
+    if (unit.length > 0) result.unit = unit.join(" ").toUpperCase();
+  }
   if (fields["qty."]) result.quantity = fields["qty."];
   return result;
 }
@@ -209,6 +225,9 @@ export async function resolveJobMetadata(jobRoot: string, files: JobFile[]): Pro
       const tag = await parseJobTag(jobTagFile.absolutePath);
       // The folder name's customer split is a heuristic; JOB TAG's own fields win when present.
       if (tag) {
+        // The folder name already found the unit / asset # when the tag doesn't repeat them.
+        if (!tag.unit) delete tag.unit;
+        if (!tag.assetNumber) delete tag.assetNumber;
         Object.assign(metadata, tag);
         note("JOB TAG.xlsx");
       }
@@ -236,6 +255,23 @@ export async function resolveJobMetadata(jobRoot: string, files: JobFile[]): Pro
       const frame = await readSerialListFrame(serialList.absolutePath);
       if (frame) {
         metadata.turbineModel = frame.split(/\s+/)[0].toUpperCase();
+        note("DS-0404");
+      }
+    } catch {
+      // leave blank
+    }
+  }
+
+  // A handful of serialized pieces (a diaphragm's 10 segments) are listed on the cover; a nozzle
+  // ring's 24+ segments aren't -- that's what the Serial Number List page is for.
+  if (serialList) {
+    try {
+      const table = await parseSerialNumberList(serialList.absolutePath);
+      const serials = [...new Set((table?.rows ?? []).map((r) => (r["Serial #"] ?? "").trim()).filter(Boolean))];
+      if (serials.length > 0 && serials.length <= 12) {
+        const lines: string[] = [];
+        for (let i = 0; i < serials.length; i += 3) lines.push(serials.slice(i, i + 3).join(", "));
+        metadata.serialNumbers = lines.join("\n");
         note("DS-0404");
       }
     } catch {

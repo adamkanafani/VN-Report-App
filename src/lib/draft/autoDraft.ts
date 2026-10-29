@@ -10,7 +10,7 @@ import {
   buildRepairSummaryDraft,
   recommendationsToSummary,
 } from "./narrative";
-import { findPriorReport, readPriorDraft, type PriorDraft } from "./priorReport";
+import { findOwnReport, findPriorReport, readPriorDraft, type PriorDraft } from "./priorReport";
 import { selectBestPhotos } from "./photoSelect";
 
 function errorMessage(err: unknown): string {
@@ -42,6 +42,23 @@ function priorRepairDeckFor(scan: JobScanResult): Promise<PriorDraft | null> {
       .then((prior) => (prior ? readPriorDraft(prior) : null))
       .catch(() => null);
     priorRepairCache.set(scan.jobRoot, p);
+  }
+  return p;
+}
+
+// This job's own I&A deck, read once per job per server session (see findOwnReport).
+const ownIaCache = new Map<string, Promise<PriorDraft | null>>();
+/** For a Repair Report, this job's own I&A deck (null for an I&A report, or when there isn't one). */
+export function ownIaDraftFor(scan: JobScanResult, reportType: string): Promise<PriorDraft | null> {
+  return /repair|final/i.test(reportType) ? ownIaDeckFor(scan) : Promise.resolve(null);
+}
+function ownIaDeckFor(scan: JobScanResult): Promise<PriorDraft | null> {
+  let p = ownIaCache.get(scan.jobRoot);
+  if (!p) {
+    p = findOwnReport(scan.jobRoot, scan.metadata.jobNumber, "ia")
+      .then((own) => (own ? readPriorDraft(own) : null))
+      .catch(() => null);
+    ownIaCache.set(scan.jobRoot, p);
   }
   return p;
 }
@@ -117,10 +134,13 @@ export function engineeringSummaryInputs(scan: JobScanResult) {
 }
 
 type Draft = { content: string; seededFrom?: string };
+const ownLabel = (own: PriorDraft) => `this job's I&A report (${path.basename(own.source.file)})`;
 
 /** Engineering Summary: the last same-product report's wording with this job's values swapped in,
  * else the router-based skeleton. */
-export function engineeringSummaryDraft(scan: JobScanResult, prior: PriorDraft | null, source: "auto" | "router" = "auto"): Draft {
+export function engineeringSummaryDraft(scan: JobScanResult, prior: PriorDraft | null, source: "auto" | "router" = "auto", own: PriorDraft | null = null): Draft {
+  // A Repair Report repeats this job's own I&A findings word for word.
+  if (source === "auto" && own?.engineeringSummary) return { content: own.engineeringSummary, seededFrom: ownLabel(own) };
   if (source === "auto" && prior?.engineeringSummary) {
     return { content: adaptPriorSummary(prior.engineeringSummary, scan.measurements), seededFrom: seededLabel(prior) };
   }
@@ -129,7 +149,8 @@ export function engineeringSummaryDraft(scan: JobScanResult, prior: PriorDraft |
 
 /** Repair Recommendations: the last same-product report's list (his own customer-facing wording),
  * else the repair router's op labels. */
-export function repairRecommendationsDraft(scan: JobScanResult, prior: PriorDraft | null, source: "auto" | "router" = "auto"): Draft | null {
+export function repairRecommendationsDraft(scan: JobScanResult, prior: PriorDraft | null, source: "auto" | "router" = "auto", own: PriorDraft | null = null): Draft | null {
+  if (source === "auto" && own?.repairRecommendations) return { content: own.repairRecommendations, seededFrom: ownLabel(own) };
   if (source === "auto" && prior?.repairRecommendations) return { content: prior.repairRecommendations, seededFrom: seededLabel(prior) };
   const router = scan.sections.find((s) => s.id === "repairRecommendations" || s.id === "repairSummary")?.parsedRouter;
   return router ? { content: buildRepairRecommendationsDraft(router) } : null;
@@ -137,9 +158,17 @@ export function repairRecommendationsDraft(scan: JobScanResult, prior: PriorDraf
 
 /** Repair Summary: this job's own Repair Recommendations in the past tense (exactly how Alfredo
  * writes it), else the last same-product report's recommendations, else the repair router. */
-export function repairSummaryDraft(scan: JobScanResult, state: JobState, prior: PriorDraft | null, source: "auto" | "router" = "auto"): Draft | null {
+export function repairSummaryDraft(
+  scan: JobScanResult,
+  state: JobState,
+  prior: PriorDraft | null,
+  source: "auto" | "router" = "auto",
+  own: PriorDraft | null = null
+): Draft | null {
   const ownRecs = state.sections["repairRecommendations"]?.content?.trim();
   if (source === "auto" && ownRecs) return { content: recommendationsToSummary(ownRecs), seededFrom: "this job's Repair Recommendations" };
+  // The I&A was done outside this app: restate the recommendations in its own deck (Job 20992).
+  if (source === "auto" && own?.repairRecommendations) return { content: recommendationsToSummary(own.repairRecommendations), seededFrom: ownLabel(own) };
   if (source === "auto" && prior?.repairRecommendations) return { content: recommendationsToSummary(prior.repairRecommendations), seededFrom: seededLabel(prior) };
   const router = scan.sections.find((s) => s.id === "repairSummary")?.parsedRouter;
   return router ? { content: buildRepairSummaryDraft(router) } : null;
@@ -180,23 +209,40 @@ export async function autoDraftJob(scan: JobScanResult, template: ReportTemplate
 
   const narrativeIds = ["engineeringSummary", "repairRecommendations", "repairSummary"].filter((id) => bySectionId.has(id) && isUntouched(id));
   const prior = narrativeIds.length > 0 ? await priorDraftFor(scan) : null;
+  // The Repair Report's first source is this job's own I&A deck: same engineering findings, its
+  // recommendations restated in the past tense, its corrected cover.
+  const own = await ownIaDraftFor(scan, template.reportType);
 
   // Recommendations first: on a job drafted straight from the Repair Report, the Repair Summary
   // is built from the same recommendations text.
   const recsState = { ...existingState, sections: { ...existingState.sections } };
-  if (narrativeIds.includes("engineeringSummary")) jobs.push(asPatch("engineeringSummary", engineeringSummaryDraft(scan, prior), ""));
+  if (narrativeIds.includes("engineeringSummary")) jobs.push(asPatch("engineeringSummary", engineeringSummaryDraft(scan, prior, "auto", own), ""));
   if (narrativeIds.includes("repairRecommendations")) {
-    const draft = repairRecommendationsDraft(scan, prior);
+    const draft = repairRecommendationsDraft(scan, prior, "auto", own);
     jobs.push(asPatch("repairRecommendations", draft, "No earlier report for this product and no repair router were found — draft this section manually."));
     if (draft) recsState.sections.repairRecommendations = { ...recsState.sections.repairRecommendations, content: draft.content };
   }
   if (narrativeIds.includes("repairSummary")) {
-    jobs.push(asPatch("repairSummary", repairSummaryDraft(scan, recsState, prior), "No repair recommendations, earlier report or repair router were found — draft this section manually."));
+    jobs.push(asPatch("repairSummary", repairSummaryDraft(scan, recsState, prior, "auto", own), "No repair recommendations, earlier report or repair router were found — draft this section manually."));
+  }
+
+  // Cover from this job's own I&A deck: every value the tech rep put there (customer site, PO,
+  // serial #'s, material, coating, boxes, ...) fills a cover field nobody has set yet.
+  if (own && !existingState.sections.cover?.acknowledged) {
+    const fields = { ...existingState.sections.cover?.fields };
+    let changed = false;
+    for (const [key, value] of Object.entries(own.coverValues)) {
+      if (!fields[key]?.trim() && value.trim()) {
+        fields[key] = value;
+        changed = true;
+      }
+    }
+    if (changed) jobs.push(["cover", { fields }]);
   }
 
   // Cover: the last report's full Tech Rep name ("Alfredo Resendiz T." where the router just says
   // "Alfredo T") and material, when this job hasn't set them -- same person, same product.
-  if (prior && !existingState.sections.cover?.acknowledged) {
+  if (!own && prior && !existingState.sections.cover?.acknowledged) {
     const fields = { ...existingState.sections.cover?.fields };
     const priorRep = prior.coverFields["Tech Rep"];
     const firstWord = (s: string) => s.trim().split(/\s+/)[0]?.toLowerCase() ?? "";

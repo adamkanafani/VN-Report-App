@@ -5,7 +5,7 @@ import type { JobScanResult, SectionScanResult } from "@/lib/ingest/scanJobFolde
 import type { JobFile } from "@/lib/ingest/fileWalk";
 import { COVER_FIELD_ORDER } from "@/lib/ingest/jobMetadata";
 import type { SectionState } from "@/lib/state/jobState";
-import { effectiveMultiSelection, isExcluded } from "@/lib/state/selection";
+import { effectiveMultiSelection, isExcluded, photoSelection } from "@/lib/state/selection";
 
 type SectionWithState = SectionScanResult & { state: SectionState };
 type ScanResponse = Omit<JobScanResult, "sections"> & { sections: SectionWithState[]; sectionOrder?: string[] };
@@ -918,21 +918,34 @@ function NarrativeEditor({
 
 const PHOTOS_PER_PAGE = 60;
 
-function PhotoSetEditor({ jobRoot, section }: { jobRoot: string; section: SectionWithState }) {
-  // Keyed by section.id in SectionPanel below, so a section switch remounts this fresh.
-  const [selected, setSelected] = useState<string[]>(section.state.selectedPhotoPaths ?? []);
+function PhotoSetEditor({ jobRoot, section, reportType }: { jobRoot: string; section: SectionWithState; reportType: ReportTypeId }) {
+  // Keyed by section.id in SectionPanel below, so a section switch remounts this fresh. Each report
+  // keeps its own pick and order (see photoSelection) -- trimming the Final's incoming photos
+  // leaves the I&A's alone.
+  const [selected, setSelected] = useState<string[]>(photoSelection(section.state, reportType) ?? []);
+  const byReport = useRef<Record<string, string[]>>({ ...section.state.selectedPhotoPathsByReport });
   const [filter, setFilter] = useState<"all" | "selected">("all");
   const [page, setPage] = useState(0);
   const [showAll, setShowAll] = useState(false);
+  const [dragging, setDragging] = useState<string | null>(null);
 
-  const toggle = async (relativePath: string) => {
-    const next = selected.includes(relativePath) ? selected.filter((p) => p !== relativePath) : [...selected, relativePath];
+  const save = async (next: string[]) => {
     setSelected(next);
+    byReport.current = { ...byReport.current, [reportType]: next };
     await fetch("/api/section-state", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jobRoot, sectionId: section.id, patch: { selectedPhotoPaths: next } }),
+      body: JSON.stringify({ jobRoot, sectionId: section.id, patch: { selectedPhotoPathsByReport: byReport.current } }),
     });
+  };
+  const toggle = (relativePath: string) => save(selected.includes(relativePath) ? selected.filter((p) => p !== relativePath) : [...selected, relativePath]);
+  // Drag a selected photo onto another to put it in that spot -- the report prints each group's
+  // photos (Shipping, NDT, Incoming, ...) in this order.
+  const moveBefore = (from: string, to: string) => {
+    if (from === to) return;
+    const next = selected.filter((p) => p !== from);
+    next.splice(next.indexOf(to), 0, from);
+    save(next);
   };
 
   const changeFilter = (next: "all" | "selected") => {
@@ -943,7 +956,9 @@ function PhotoSetEditor({ jobRoot, section }: { jobRoot: string; section: Sectio
   // "selected" is whatever's currently checked -- the AI's initial pick, plus any manual
   // adjustments the tech rep has made since -- so this filter always reflects the live set,
   // not a frozen snapshot of the original auto-selection.
-  const filtered = filter === "selected" ? section.matchedFiles.filter((f) => selected.includes(f.relativePath)) : section.matchedFiles;
+  const byPath = new Map(section.matchedFiles.map((f) => [f.relativePath, f]));
+  const filtered = filter === "selected" ? selected.map((p) => byPath.get(p)).filter((f): f is JobFile => Boolean(f)) : section.matchedFiles;
+  const reordering = filter === "selected";
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PHOTOS_PER_PAGE));
   const clampedPage = Math.min(page, totalPages - 1);
@@ -960,8 +975,9 @@ function PhotoSetEditor({ jobRoot, section }: { jobRoot: string; section: Sectio
         </p>
       )}
       <p className="file-count">
-        Incoming/NDT photos are preselected automatically, minus duplicates and unusable shots — click any photo to toggle it in/out of the final selection.{" "}
-        {selected.length} selected.
+        Incoming/NDT photos are preselected automatically, minus duplicates and unusable shots — click any photo to toggle it in/out of this report.
+        {reportType === "final" ? " The Final Report keeps its own pick, separate from the I&A's." : ""} In &quot;Selected&quot;, drag photos to set their order. {selected.length}{" "}
+        selected.
       </p>
 
       <div className="photo-filter-tabs">
@@ -978,12 +994,32 @@ function PhotoSetEditor({ jobRoot, section }: { jobRoot: string; section: Sectio
       ) : (
         <div className="photo-grid">
           {shown.map((f) => (
-            <div key={f.relativePath} className={`photo-tile ${selected.includes(f.relativePath) ? "selected" : ""}`} onClick={() => toggle(f.relativePath)}>
+            <div
+              key={f.relativePath}
+              className={`photo-tile ${selected.includes(f.relativePath) ? "selected" : ""} ${dragging === f.relativePath ? "dragging" : ""}`}
+              onClick={() => toggle(f.relativePath)}
+              draggable={reordering}
+              onDragStart={(e) => {
+                e.dataTransfer.effectAllowed = "move";
+                setDragging(f.relativePath);
+              }}
+              onDragEnd={() => setDragging(null)}
+              onDragOver={(e) => reordering && dragging && e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragging) moveBefore(dragging, f.relativePath);
+                setDragging(null);
+              }}
+            >
+              {/* A 360px thumbnail, not the camera original (see /api/photo-file's ?w=). */}
               <img
-                src={`/api/photo-file?jobRoot=${encodeURIComponent(jobRoot)}&path=${encodeURIComponent(f.relativePath)}`}
+                src={`/api/photo-file?jobRoot=${encodeURIComponent(jobRoot)}&path=${encodeURIComponent(f.relativePath)}&w=360`}
                 alt={f.relativePath}
                 loading="lazy"
+                decoding="async"
+                draggable={false}
               />
+              {reordering && <span className="photo-order">{selected.indexOf(f.relativePath) + 1}</span>}
               <div className="caption">{f.relativePath.split("/").pop()}</div>
             </div>
           ))}
@@ -1650,7 +1686,7 @@ function SectionPanel({
       {section.generation === "table-from-source" && (
         <TablePreview key={section.id} jobRoot={jobRoot} section={section} onRefresh={onRefresh} patchSectionState={patchSectionState} />
       )}
-      {section.generation === "llm-vision-select" && <PhotoSetEditor key={section.id} jobRoot={jobRoot} section={section} />}
+      {section.generation === "llm-vision-select" && <PhotoSetEditor key={section.id} jobRoot={jobRoot} section={section} reportType={reportType} />}
       {section.generation === "attach-as-is" && <AttachAsIs key={section.id} jobRoot={jobRoot} section={section} onRefresh={onRefresh} />}
       {section.generation === "attach-multi" && <MultiAttach key={section.id} jobRoot={jobRoot} section={section} onRefresh={onRefresh} />}
       {section.generation === "template" && (

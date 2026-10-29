@@ -3,7 +3,8 @@ import { scanJobFolder } from "@/lib/ingest/scanJobFolder";
 import { templateForJob } from "@/lib/report-templates/forJob";
 import { updateSectionState, loadJobState } from "@/lib/state/jobState";
 import { reviseSection } from "@/lib/draft/narrative";
-import { engineeringSummaryDraft, priorDraftFor, repairRecommendationsDraft, repairSummaryDraft } from "@/lib/draft/autoDraft";
+import { engineeringSummaryDraft, ownIaDraftFor, priorDraftFor, repairRecommendationsDraft, repairSummaryDraft } from "@/lib/draft/autoDraft";
+import { reportKey } from "@/lib/state/selection";
 import { selectBestPhotos } from "@/lib/draft/photoSelect";
 
 /** Redraft one section. With an `instruction`, Claude revises the current text; without one the
@@ -41,13 +42,15 @@ export async function POST(request: NextRequest) {
       } else {
         const mode = source ?? "auto";
         const prior = mode === "auto" ? await priorDraftFor(scanResult) : null;
+        // "Start over" on a Repair Report goes back to this job's own I&A deck first, like the scan.
+        const own = mode === "auto" ? await ownIaDraftFor(scanResult, scanResult.reportType) : null;
         const draft =
           sectionId === "engineeringSummary"
-            ? engineeringSummaryDraft(scanResult, prior, mode)
+            ? engineeringSummaryDraft(scanResult, prior, mode, own)
             : sectionId === "repairRecommendations"
-              ? repairRecommendationsDraft(scanResult, prior, mode)
+              ? repairRecommendationsDraft(scanResult, prior, mode, own)
               : sectionId === "repairSummary"
-                ? repairSummaryDraft(scanResult, jobState, prior, mode)
+                ? repairSummaryDraft(scanResult, jobState, prior, mode, own)
                 : null;
         if (!draft) return NextResponse.json({ error: "No source data to draft this section from" }, { status: 400 });
         content = draft.content;
@@ -60,6 +63,10 @@ export async function POST(request: NextRequest) {
     const newState = await updateSectionState(jobRoot, sectionId, {
       content,
       selectedPhotoPaths,
+      // A fresh photo pick replaces this report's own pick too (see photoSelection).
+      ...(selectedPhotoPaths && {
+        selectedPhotoPathsByReport: { ...jobState.sections[sectionId]?.selectedPhotoPathsByReport, [reportKey(reportType ?? "ia")]: selectedPhotoPaths },
+      }),
       seededFrom,
       draftError: undefined,
       lastGeneratedAt: new Date().toISOString(),

@@ -21,3 +21,16 @@ export function effectiveMultiSelection(
 export function isExcluded(section: { defaultExcluded?: boolean }, sectionState: Pick<SectionState, "excludeFromReport"> | undefined): boolean {
   return sectionState?.excludeFromReport ?? Boolean(section.defaultExcluded);
 }
+
+/** "ia" / "final" from either the review screen's report id or a template's report name
+ * ("Incoming Report" / "Repair Report"). */
+export function reportKey(reportType: string): "ia" | "final" {
+  return /repair|final/i.test(reportType) ? "final" : "ia";
+}
+
+/** A photo section's picked photos, in the tech rep's order, for one report. The I&A and the Final
+ * Report keep separate picks (the Final usually carries far fewer incoming photos); a report with no
+ * pick of its own yet starts from the shared one (the automatic pre-selection). */
+export function photoSelection(sectionState: Pick<SectionState, "selectedPhotoPaths" | "selectedPhotoPathsByReport"> | undefined, reportType: string): string[] | undefined {
+  return sectionState?.selectedPhotoPathsByReport?.[reportKey(reportType)] ?? sectionState?.selectedPhotoPaths;
+}

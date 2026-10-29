@@ -925,6 +925,32 @@ button.generate-report:active:not(:disabled) {
   display: block;
 }
 
+/* Print-order number on each photo in the "Selected" view, where tiles drag to reorder. */
+.photo-order {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #0b3d91;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.photo-tile[draggable="true"] {
+  cursor: grab;
+}
+
+.photo-tile.dragging {
+  opacity: 0.4;
+}
+
 .photo-tile .caption {
   font-size: 10px;
   color: #33507a;
