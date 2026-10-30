@@ -12,6 +12,8 @@ Format: plain text, one item per line:
 - A blank line separates groups.
 - A line starting with "NOTE:" is rendered bold.
 - Anything else is a plain paragraph.
+- Inside a line, **text** is bold, __text__ is underlined and //text// is italic -- the reviewer's own
+  formatting. Keep every one of these markers around the same words unless told to change them.
 Return only the revised section text.`;
 
 interface DraftContext {

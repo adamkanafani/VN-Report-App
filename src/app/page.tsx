@@ -7,6 +7,7 @@ import { COVER_FIELD_ORDER } from "@/lib/ingest/jobMetadata";
 import type { SectionState } from "@/lib/state/jobState";
 import { effectiveMultiSelection, isExcluded } from "@/lib/state/selection";
 import { PhotoPagePicker } from "./PhotoPagePicker";
+import { RichTextEditor } from "./RichTextEditor";
 
 type SectionWithState = SectionScanResult & { state: SectionState };
 type ScanResponse = Omit<JobScanResult, "sections"> & { sections: SectionWithState[]; sectionOrder?: string[] };
@@ -916,7 +917,7 @@ function NarrativeEditor({
           instruction&quot; to ask Claude for a fresh attempt.
         </p>
       )}
-      <textarea className="draft-textarea" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="No draft yet — flagged for manual review." />
+      <RichTextEditor initialValue={draft} onChange={setDraft} placeholder="No draft yet — flagged for manual review." />
       <div className="toolbar">
         <button className="secondary" disabled={busy} onClick={saveManualEdit}>
           Save Edit

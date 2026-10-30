@@ -1,3 +1,4 @@
+import { isHeadingLine, parseInline, stripInline } from "../draft/inlineFormat";
 import { promises as fs } from "fs";
 import path from "path";
 import sharp from "sharp";
@@ -105,19 +106,34 @@ function toParas(content: string): Para[] {
     const line = raw.trim();
     if (!line) continue;
     if (line.startsWith("- ")) out.push({ kind: "bullet", text: line.slice(2) });
-    else if (line.endsWith(":") && line.length <= 60 && !/^apg (recommends|performed)/i.test(line)) out.push({ kind: "heading", text: line });
+    else if (isHeadingLine(line) && !/^apg (recommends|performed)/i.test(stripInline(line))) out.push({ kind: "heading", text: line });
     else out.push({ kind: "lead", text: line });
   }
   return out;
 }
 
+// One paragraph's text as runs -- a run per stretch of **bold** / __underline__ / //italic// (see
+// inlineFormat.ts). Paragraph settings (bullet, spacing) go on the first run only: pptxgenjs starts
+// a new paragraph at every run that carries a bullet.
 function runsFor(paras: Para[], size: number): TextRun[] {
-  return paras.map((p, i) => {
+  return paras.flatMap((p, i) => {
     const last = i === paras.length - 1;
-    if (p.kind === "bullet") return { text: p.text, options: { fontSize: size, fontFace: FONT, bullet: { indent: 10 }, breakLine: !last } };
-    if (p.kind === "heading")
-      return { text: p.text, options: { fontSize: size, fontFace: FONT, bold: true, underline: { style: "sng" }, paraSpaceBefore: i === 0 ? 0 : 10, breakLine: !last } };
-    return { text: p.text, options: { fontSize: size, fontFace: FONT, bold: true, breakLine: !last } };
+    const base = p.kind === "heading" ? { bold: true, underline: true } : p.kind === "lead" ? { bold: true, underline: false } : { bold: false, underline: false };
+    const pieces = parseInline(p.text);
+    const para =
+      p.kind === "bullet" ? { bullet: { indent: 10 } } : p.kind === "heading" ? { paraSpaceBefore: i === 0 ? 0 : 10 } : {};
+    return (pieces.length > 0 ? pieces : [{ text: " ", bold: false, underline: false, italic: false }]).map((r, k, all) => ({
+      text: r.text,
+      options: {
+        fontSize: size,
+        fontFace: FONT,
+        bold: base.bold || r.bold,
+        italic: r.italic || undefined,
+        underline: base.underline || r.underline ? { style: "sng" as const } : undefined,
+        ...(k === 0 ? para : {}),
+        breakLine: k === all.length - 1 && !last,
+      },
+    }));
   });
 }
 
@@ -125,7 +141,7 @@ function runsFor(paras: Para[], size: number): TextRun[] {
  * his kind of text (calibrated so his 30-line Repair Recommendations fit one slide at 16pt). */
 function lineCount(paras: Para[], size: number, width: number): number {
   const charsPerLine = Math.max(20, Math.floor((width - 0.45) / ((size * 0.46) / 72)));
-  return paras.reduce((n, p) => n + Math.max(1, Math.ceil(p.text.length / charsPerLine)) + (p.kind === "heading" ? 0.5 : 0), 0);
+  return paras.reduce((n, p) => n + Math.max(1, Math.ceil(stripInline(p.text).length / charsPerLine)) + (p.kind === "heading" ? 0.5 : 0), 0);
 }
 
 const linesFit = (height: number, size: number) => Math.floor(height / ((size * 1.17) / 72));
@@ -218,11 +234,10 @@ async function addPhotoSlides(pptx: Pptx, section: SectionScanResult, scan: JobS
       images.forEach((img, k) => {
         if (!img) return;
         const [x, y] = PHOTO_SLOTS[k];
-        // Fit inside the 3.27 × 2.80 slot, centered, keeping the photo's own aspect ratio.
-        const scale = Math.min(PHOTO_W / img.w, PHOTO_H / img.h);
-        const w = img.w * scale;
-        const h = img.h * scale;
-        slide.addImage({ data: img.data, x: x + (PHOTO_W - w) / 2, y: y + (PHOTO_H - h) / 2, w, h });
+        // Fill the whole 3.27 × 2.80 slot, cropping the overflow (a portrait shot loses some top and
+        // bottom rather than shrinking to a narrow strip) -- how the tech reps' own photo slides look.
+        const scale = Math.max(PHOTO_W / img.w, PHOTO_H / img.h);
+        slide.addImage({ data: img.data, x, y, w: img.w * scale, h: img.h * scale, sizing: { type: "cover", w: PHOTO_W, h: PHOTO_H } });
       });
     }
   }

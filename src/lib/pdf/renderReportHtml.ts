@@ -1,3 +1,4 @@
+import { inlineHtml, isHeadingLine, stripInline } from "../draft/inlineFormat";
 import { promises as fs } from "fs";
 import path from "path";
 import sharp from "sharp";
@@ -115,7 +116,8 @@ function renderTable(table: ParsedTable, options?: { columnBlocks?: number; note
 /** Line-based markup matching APG's usual report style: a short line ending in ":" is a
  * (subheading), a line starting with "- " is a bullet under whatever came before it, "NOTE:" at
  * the start of a line gets bolded, and everything else is a plain paragraph — not one flowing
- * block of prose. Blank lines just separate groups; they don't need their own markup. */
+ * block of prose. Blank lines just separate groups; they don't need their own markup. Within a
+ * line, **bold** / __underline__ / //italic// from the editor print as such (inlineFormat.ts). */
 function renderNarrative(text: string | undefined): string {
   if (!text) return `<p class="missing">No draft generated yet for this section.</p>`;
 
@@ -139,17 +141,17 @@ function renderNarrative(text: string | undefined): string {
         parts.push(`<ul class="narrative-list">`);
         listOpen = true;
       }
-      parts.push(`<li>${escapeHtml(line.slice(2))}</li>`);
+      parts.push(`<li>${inlineHtml(line.slice(2))}</li>`);
       continue;
     }
     closeList();
     if (/^NOTE:/i.test(line)) {
       const rest = line.slice(line.indexOf(":") + 1).trim();
-      parts.push(`<p><strong>NOTE:</strong> ${escapeHtml(rest)}</p>`);
-    } else if (line.endsWith(":") && line.length <= 60) {
-      parts.push(`<p class="subhead">${escapeHtml(line)}</p>`);
+      parts.push(`<p><strong>NOTE:</strong> ${inlineHtml(rest)}</p>`);
+    } else if (isHeadingLine(line)) {
+      parts.push(`<p class="subhead">${inlineHtml(line)}</p>`);
     } else {
-      parts.push(`<p>${escapeHtml(line)}</p>`);
+      parts.push(`<p>${inlineHtml(line)}</p>`);
     }
   }
   closeList();
@@ -323,9 +325,11 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
   .form-notes-label { font-weight: 700; text-decoration: underline; font-size: 10px; }
   .form-notes-text { margin-top: 4px; font-size: 11px; white-space: pre-wrap; }
   .photo-grid { display: flex; flex-wrap: wrap; gap: 8px; }
-  .photo-page-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: repeat(3, 280px); gap: 12px; }
-  .photo-page-grid figure { margin: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-  .photo-page-grid img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  /* Every photo fills its slot edge to edge (portrait shots cropped to the slot, not shrunk to a
+     narrow strip), the way the tech reps' own photo pages look -- Job 20992's NDT pages. */
+  .photo-page-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: repeat(3, 284px); gap: 12px; }
+  .photo-page-grid figure { margin: 0; overflow: hidden; }
+  .photo-page-grid img { display: block; width: 100%; height: 100%; object-fit: cover; }
   .photo-grid figure { width: 30%; margin: 0; }
   .photo-grid img { width: 100%; height: auto; border: 1px solid #ccc; }
   .photo-grid figcaption { font-size: 8px; color: #555; word-break: break-all; }
@@ -526,7 +530,7 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
       let body = narrativeHtml;
       if (isRepairList) {
         const [leadIn, ...rest] = (contentFor(id) ?? "").split("\n");
-        body = leadIn?.trim().endsWith(":") ? `<p>${escapeHtml(leadIn.trim())}</p><div class="repairs-columns">${renderNarrative(rest.join("\n"))}</div>` : `<div class="repairs-columns">${narrativeHtml}</div>`;
+        body = leadIn && stripInline(leadIn).trim().endsWith(":") ? `<p>${inlineHtml(leadIn.trim())}</p><div class="repairs-columns">${renderNarrative(rest.join("\n"))}</div>` : `<div class="repairs-columns">${narrativeHtml}</div>`;
       }
       const sectionClass = ["report-page", "narrative-section", isRepairList && "repairs-section"].filter(Boolean).join(" ");
       // The header sits in a <thead> so Chrome repeats it on every page the text runs onto -- a
