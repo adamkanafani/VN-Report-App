@@ -86,9 +86,13 @@ export async function htmlToPdf(html: string): Promise<Buffer> {
     try {
       await page.setContent(html, { waitUntil: "load" });
       const pdfBuffer = await page.pdf({
-        format: "letter",
+        // The tech reps' own report pages are 7.5 x 10in (their PowerPoint slide size) edge to edge;
+        // only the exhibit sheets copied in are Letter. Same here, so a page of ours sits beside a
+        // page of theirs at the same scale (renderReportHtml.ts lays out in pt on this page).
+        width: "7.5in",
+        height: "10in",
         printBackground: true,
-        margin: { top: "0.5in", bottom: "0.5in", left: "0.5in", right: "0.5in" },
+        margin: { top: "0", bottom: "0", left: "0", right: "0" },
       });
       return Buffer.from(pdfBuffer);
     } finally {

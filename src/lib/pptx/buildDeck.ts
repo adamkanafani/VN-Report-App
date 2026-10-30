@@ -80,7 +80,7 @@ function addTitle(slide: Slide, title: string, size = 20) {
 function fieldRuns(fields: Array<{ label: string; value: string }>, size: number, spaceAfter: number): TextRun[] {
   // His labels print gray, values black.
   return fields.flatMap(({ label, value }, i) => [
-    { text: `${label.replace(/:?\s*$/, ":")}\t`, options: { bold: true, fontSize: size, fontFace: FONT, color: "7F7F7F", tabStops: [{ position: 3.0 }], paraSpaceAfter: spaceAfter } },
+    { text: `${label}\t`, options: { bold: true, fontSize: size, fontFace: FONT, color: "7F7F7F", tabStops: [{ position: 3.0 }], paraSpaceAfter: spaceAfter } },
     { text: value || " ", options: { bold: true, fontSize: size, fontFace: FONT, color: "000000", breakLine: i < fields.length - 1 } },
   ]);
 }

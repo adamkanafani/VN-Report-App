@@ -85,7 +85,8 @@ const KNOWN_COVER_LABELS = new Set(
 async function seedLayout(scan: JobScanResult, template: ReportTemplate, prior: PriorDraft | null): Promise<void> {
   await mutateJobState(scan.jobRoot, (state) => {
     const rt = template.reportType;
-    if (state.layoutSeeded?.[rt]) return;
+    // "none" = no earlier report was found last time; try again (new part kinds, a newly finished job).
+    if (state.layoutSeeded?.[rt] && !(state.layoutSeeded[rt] === "none" && prior)) return;
     state.layoutSeeded = { ...state.layoutSeeded, [rt]: prior ? `Job ${prior.source.jobNumber}` : "none" };
     if (prior) {
       const titles: Record<string, string> = { ...state.sectionTitles?.[rt] };
@@ -111,6 +112,9 @@ async function seedLayout(scan: JobScanResult, template: ReportTemplate, prior: 
       if (extra.length > 0) {
         cover.customFields = [...(cover.customFields ?? []), ...extra.map((label) => ({ id: `seed-${label.replace(/[^A-Za-z0-9]/g, "")}`, label, value: "" }))];
       }
+      // His exact cover labels ("Unit#", "Prior Repair:") and where he puts the EQ#.
+      if (!cover.fieldLabelsExact) cover.fieldLabelsExact = prior.coverLabelsExact;
+      if (cover.assetWithPO === undefined) cover.assetWithPO = prior.assetWithPO;
       state.sections.cover = cover;
     }
   });
@@ -255,7 +259,10 @@ export async function autoDraftJob(scan: JobScanResult, template: ReportTemplate
         changed = true;
       }
     }
-    if (changed) jobs.push(["cover", { fields }]);
+    const cover = existingState.sections.cover;
+    if (changed || !cover?.fieldLabelsExact) {
+      jobs.push(["cover", { fields, fieldLabelsExact: cover?.fieldLabelsExact ?? own.coverLabelsExact, assetWithPO: cover?.assetWithPO ?? own.assetWithPO }]);
+    }
   }
 
   // Cover: the last report's full Tech Rep name ("Alfredo Resendiz T." where the router just says

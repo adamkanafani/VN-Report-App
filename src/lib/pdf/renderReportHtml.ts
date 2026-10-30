@@ -39,7 +39,7 @@ function pageHeader(title: string, logo: string, titleSize = 20): string {
   return `
     <div class="letterhead">
       <img class="logo" src="${logo}" alt="APG" />
-      <h1 class="page-title" style="font-size: ${titleSize}pt">${escapeHtml(title)}</h1>
+      <h1 class="page-title" style="font-size: ${titleSize}pt; top: ${titleSize >= 24 ? -1.5 : 1.5}pt">${escapeHtml(title)}</h1>
     </div>
     <div class="letterhead-bar"></div>`;
 }
@@ -51,7 +51,8 @@ function dividerPage(title: string, logo: string): string {
   // "Incoming Dimensional Sheets" over two lines like the decks ("Incoming" / "Dimensional Sheets").
   const m = title.match(/^(Incoming|Final)\s+(.{12,})$/);
   const text = m ? `${escapeHtml(m[1])}<br />${escapeHtml(m[2])}` : escapeHtml(title);
-  return `<section class="report-page divider-page"><img class="logo" src="${logo}" alt="APG" /><div class="divider-title">${text}</div></section>`;
+  // His divider slides keep the header's logo and bars, just no title.
+  return `<section class="report-page divider-page">${pageHeader("", logo)}<div class="divider-title">${text}</div></section>`;
 }
 
 /** data-col carries the raw column name onto each cell so specific columns (e.g. "APG #") can
@@ -229,13 +230,30 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
   p.subhead:first-child { margin-top: 0; }
   .narrative-list { margin: 0 0 6px; padding-left: 22px; }
   .narrative-list li { margin-bottom: 1px; line-height: 1.5; }
+  /* Summary / repair list pages, measured off Adan Aguirre's 20992 I&A (pp. 4-5): paragraphs and
+     subheadings 17pt bold (subheadings underlined), bullets 15.5pt (16pt in repair lists), every
+     line 1.2x its size, a blank line between groups; the bullet dot 7.2pt in from the left, its
+     text at 29.8pt. */
+  .narrative-section p, .narrative-section li { margin: 0; line-height: 1.2; color: #000000; }
+  .narrative-section p { font-size: 17pt; font-weight: 700; }
+  .narrative-section p.subhead { margin-top: 19.9pt; }
+  .narrative-section p:first-child { margin-top: 0; }
+  .narrative-section .narrative-list { margin: 0; padding-left: 22.6pt; list-style: none; }
+  .narrative-section p:not(.subhead) + .narrative-list { margin-top: 19.7pt; }
+  .narrative-section .narrative-list li { position: relative; font-size: 15.5pt; font-weight: 400; }
+  .narrative-section .narrative-list li::before { content: "•"; position: absolute; left: -22.6pt; }
+  .narrative-section .narrative-list + p { margin-top: 18pt; }
+  .repairs-section .narrative-list li { font-size: 16pt; }
+  .narrative-section p + .repairs-columns { margin-top: 19.7pt; }
+  /* His repair list page starts its lead-in 8pt lower than the summary page. */
+  .repairs-section table.page-frame > tbody > tr > td > p:first-child { margin-top: 8pt; }
   /* I&A Summary, FPI & Visual, Dimensional Summary, Recommended Repairs — larger than the base
      body size (which stays small so data tables keep fitting) since these are the sections
      someone actually sits down and reads. Every narrative section shares one size, bold
      underlined subheads included, per tech rep feedback that the summaries should look uniform
      (the I&A Summary and FPI & Visual look was the one they liked; Dimensional Summary used to
      render smaller with non-bold subheads). */
-  .narrative-section p, .narrative-section li { font-size: 19px; line-height: 1.6; }
+
   section { page-break-inside: avoid; }
   section.report-page { page-break-before: always; margin-bottom: 16px; }
   section.table-section { page-break-inside: auto; }
@@ -270,7 +288,7 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
      report's content area (Letter inside 0.5in margins) -- so everything below is in pt at his
      positions: what prints lands where it does on his pages. */
 
-  /* Divider: just the logo top left and the block's title, black 40pt bold, centered 256pt down. */
+  /* Divider: the page header without a title, and the block's title, black 40pt bold, centered 256pt down. */
   .divider-page { position: relative; height: 700pt; }
   .divider-page .logo { position: absolute; left: 0; top: 0; width: 79pt; height: 44pt; object-fit: contain; object-position: left top; }
   .divider-title { position: absolute; top: 256pt; left: 0; right: 0; text-align: center; font-size: 40pt; line-height: 48pt; font-weight: 700; color: #000000; }
@@ -279,7 +297,7 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
      then his two 7pt bars -- blue (#0046A2) over gray (#7F7F7F), the gray offset down and right. */
   .letterhead { position: relative; height: 44pt; }
   .letterhead .logo { position: absolute; left: 0; top: 0; width: 79pt; height: 44pt; object-fit: contain; object-position: left top; }
-  .letterhead .page-title { margin: 0; text-align: center; font-weight: 700; color: #000000; line-height: 44pt; white-space: nowrap; }
+  .letterhead .page-title { position: relative; margin: 0; text-align: center; font-weight: 700; color: #000000; line-height: 44pt; white-space: nowrap; }
   .letterhead-bar { position: relative; height: 10.75pt; margin: 0 0 3pt; }
   .letterhead-bar::before { content: ""; position: absolute; left: 35pt; top: 3.75pt; width: 504pt; height: 7pt; background: #7f7f7f; }
   .letterhead-bar::after { content: ""; position: absolute; left: 26.75pt; top: 0; width: 511.25pt; height: 7pt; background: #0046a2; }
@@ -341,7 +359,7 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
   /* Every photo fills its slot edge to edge (portrait shots cropped to the slot, not shrunk to a
      narrow strip), the way the tech reps' own photo pages look -- Job 20992's NDT pages. */
   /* His photo pages: photos 246 x 206pt, 18pt in from the left, 13pt apart across, 12pt down. */
-  .photo-page-grid { display: grid; grid-template-columns: 246pt 246pt; grid-template-rows: repeat(3, 206pt); column-gap: 13pt; row-gap: 12pt; margin: 9pt 0 0 18pt; }
+  .photo-page-grid { display: grid; grid-template-columns: 246pt 246pt; grid-template-rows: repeat(3, 206pt); column-gap: 13pt; row-gap: 12pt; margin: 12pt 0 0 18pt; }
   .photo-page-grid figure { margin: 0; overflow: hidden; }
   .photo-page-grid img { display: block; width: 100%; height: 100%; object-fit: cover; }
   .photo-grid figure { width: 30%; margin: 0; }
@@ -389,6 +407,9 @@ function coverDate(raw: string): string {
  * wrapped values and the blank line between rows included -- fits the space left on the page. His
  * 20992 details page, with ten serial numbers, came out at 20.5pt the same way. Value column is
  * 316.8pt wide (223.2pt in from the left of a 540pt page); bold Arial averages ~0.58em per char. */
+// Where his cover text box ends on the 720pt page -- his 20992 details page fills it exactly at 20.5pt.
+const COVER_TEXT_BOTTOM = 697.5;
+
 function coverFontSize(fields: Array<{ label: string; value: string }>, available: number): number {
   for (let size = 24; size > 14; size -= 0.5) {
     const perLine = Math.max(8, Math.floor(316.8 / (size * 0.58)));
@@ -409,11 +430,20 @@ export function coverPages(
     COVER_FIELD_ORDER.map(({ key, label }) => {
       const raw = (coverOverrides[key as string] ?? (scan.metadata[key] as string) ?? "").toString();
       const value = key === "date" ? coverDate(raw) : raw;
-      // Author's own label where it differs ("EQ#" vs "Asset#") -- see SectionState.fieldLabels.
-      return [key as string, { label: coverState?.fieldLabels?.[key as string] ?? label, value, standard: true }];
+      // The author's own label, exactly ("Unit#", "Prior Repair:" -- see fieldLabelsExact), else the
+      // standard one (or their "EQ#" for "Asset#") with a colon.
+      const exact = coverState?.fieldLabelsExact?.[key as string];
+      return [key as string, { label: exact ?? `${coverState?.fieldLabels?.[key as string] ?? label}:`, value, standard: true }];
     })
   );
-  const customCoverFields = new Map((coverState?.customFields ?? []).map((f) => [f.id, { label: f.label, value: f.value, standard: false }]));
+  // EQ# under the PO number, as some authors write it (see SectionState.assetWithPO).
+  const asset = fixedCoverFields.get("assetNumber");
+  const po = fixedCoverFields.get("customerPO");
+  if (coverState?.assetWithPO && asset?.value.trim() && po) {
+    po.value = `${po.value}\n${coverState.fieldLabelsExact?.assetNumber ?? "EQ#:"} ${asset.value}`;
+    asset.value = "";
+  }
+  const customCoverFields = new Map((coverState?.customFields ?? []).map((f) => [f.id, { label: `${f.label}:`, value: f.value, standard: false }]));
   // Combined key order across both the fixed and custom fields, matching CoverEditor's own
   // fieldOrder -- falls back to "every fixed field, then every custom field" for anything
   // fieldOrder doesn't mention.
@@ -528,20 +558,20 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
   // label/value list; the component-details rows on a second page.
   const { page1, page2 } = coverPages(scan, state);
   const coverRowsHtml = (fields: Array<{ label: string; value: string }>) =>
-    fields.map(({ label, value }) => `<div class="cover-row"><span class="cover-label">${escapeHtml(label)}:</span><span class="cover-value">${escapeHtml(value)}</span></div>`).join("");
+    fields.map(({ label, value }) => `<div class="cover-row"><span class="cover-label">${escapeHtml(label)}</span><span class="cover-value">${escapeHtml(value)}</span></div>`).join("");
   // His cover rows start 249pt down on page 1 and 57.5pt down on the details page (right under the
   // header), in the 720pt-tall page.
   bodyParts.push(`
     <section class="cover">
       <img class="cover-logo" src="${logo}" alt="APG" />
       <h1>${escapeHtml(scan.reportType)}</h1>
-      <div class="cover-fields" style="font-size: ${coverFontSize(page1, 720 - 249)}pt">${coverRowsHtml(page1)}</div>
+      <div class="cover-fields" style="font-size: ${coverFontSize(page1, COVER_TEXT_BOTTOM - 249)}pt">${coverRowsHtml(page1)}</div>
     </section>`);
   if (page2.length > 0) {
     bodyParts.push(`
       <section class="cover cover-continued report-page">
         ${pageHeader(scan.reportType, logo)}
-        <div class="cover-fields" style="font-size: ${coverFontSize(page2, 720 - 57.5)}pt">${coverRowsHtml(page2)}</div>
+        <div class="cover-fields" style="font-size: ${coverFontSize(page2, COVER_TEXT_BOTTOM - 57.5)}pt">${coverRowsHtml(page2)}</div>
       </section>`);
   }
 

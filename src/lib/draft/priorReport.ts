@@ -214,6 +214,11 @@ export interface PriorDraft {
   /** The two cover slides' values keyed by this app's cover field keys (customer, detailsCustomer,
    * serialNumbers, coating, ...), multi-line values kept as lines. */
   coverValues: Record<string, string>;
+  /** Each cover label exactly as the author writes it, colon or not ("Unit#", "Prior Repair:"). */
+  coverLabelsExact: Record<string, string>;
+  /** The author puts the EQ# under the PO number ("TM020-... / EQ#: 10956713") rather than on a row
+   * of its own (Adan Aguirre, Job 20992). */
+  assetWithPO: boolean;
 }
 
 const COVER_KEY_FOR_LABEL: Record<string, string> = {
@@ -228,8 +233,10 @@ const COVER_KEY_FOR_LABEL: Record<string, string> = {
  * with no label continues the one above it on a new line ("TW68353, TW68354, TW57210" under
  * "Serial #'s:", "(New crate needed)" under "Boxes:"). "Customer" on the second slide is the
  * component-details page's own customer; an "EQ#: …" tacked onto the PO line is the asset #. */
-function coverValues(slides: DeckSlide[]): Record<string, string> {
+function coverValues(slides: DeckSlide[]): { values: Record<string, string>; labels: Record<string, string>; assetWithPO: boolean } {
   const out: Record<string, string> = {};
+  const labels: Record<string, string> = {};
+  let assetWithPO = false;
   const covers = slides.slice(0, 5).filter((s) => !s.hidden && /customer\s*:/i.test(s.text)).slice(0, 2);
   covers.forEach((slide, slideIndex) => {
     const shapes = [...slide.shapes].sort((a, b) => a.y - b.y || a.x - b.x);
@@ -242,12 +249,22 @@ function coverValues(slides: DeckSlide[]): Record<string, string> {
         const labelKey = m ? m[1].toLowerCase().replace(/[^a-z]/g, "") : "";
         const key = labelKey === "customer" ? (slideIndex === 0 ? "customer" : "detailsCustomer") : COVER_KEY_FOR_LABEL[labelKey];
         if (m && key) {
-          let value = clean(m[2]);
-          const eq = value.match(/^(.*?)\s*\b(?:EQ|Asset)\s*#\s*:?\s*(\d{5,})\s*$/i);
+          let rawValue = m[2];
+          const eq = rawValue.match(/^([\s\S]*?)\s*\b((?:EQ|Asset)\s*#\s*:?)\s*(\d{5,})\s*$/i);
           if (eq) {
-            value = eq[1];
-            out.assetNumber ??= eq[2];
+            rawValue = eq[1];
+            out.assetNumber ??= eq[3];
+            labels.assetNumber ??= clean(eq[2]).replace(/\s+/g, "");
+            if (key === "customerPO") assetWithPO = true;
           }
+          // A run of tabs inside a value is where the author broke the line ("W501F Row 1 CM2<tabs>
+          // Compressor Diaphragm" prints as two lines on his cover).
+          const value = rawValue
+            .split(/\t{2,}|\t[ ]+\t/)
+            .map(clean)
+            .filter(Boolean)
+            .join("\n");
+          labels[key] ??= clean(m[1]) + (/^\s*[A-Za-z][A-Za-z #'’/.]{0,24}?\s*:/.test(raw) ? ":" : "");
           current = key;
           if (value && !out[key]) out[key] = value;
         } else if (m && labelKey) {
@@ -258,7 +275,7 @@ function coverValues(slides: DeckSlide[]): Record<string, string> {
       }
     }
   });
-  return out;
+  return { values: out, labels, assetWithPO };
 }
 
 const clean = (s: string) => s.replace(/\t+/g, " ").replace(/\s+/g, " ").trim();
@@ -364,6 +381,9 @@ export async function readPriorDraft(prior: PriorReport): Promise<PriorDraft> {
     coverFields: coverFields(slides),
     coverLabels: coverLabels(slides),
     dividers: dividerTitles(slides),
-    coverValues: coverValues(slides),
+    ...(() => {
+      const cover = coverValues(slides);
+      return { coverValues: cover.values, coverLabelsExact: cover.labels, assetWithPO: cover.assetWithPO };
+    })(),
   };
 }

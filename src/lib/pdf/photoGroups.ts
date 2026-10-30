@@ -17,6 +17,8 @@ function partLabel(folder: string): string {
   return f.toLowerCase().replace(/\b([a-z])/g, (m) => m.toUpperCase());
 }
 
+const KNOWN_PART = /nozzle|segment|vane|retain(er|ing)\s*ring|ret\.?\s*ring|cores?|covers?|flat\s*seal|packing|hardware/i;
+
 export function photoGroup(folderPath: string): { label: string; rank: number } {
   const parts = folderPath.split("/");
   const after = (pattern: RegExp) => {
@@ -24,8 +26,10 @@ export function photoGroup(folderPath: string): { label: string; rank: number } 
     return i !== -1 ? parts[i + 1] : undefined;
   };
   if (/shipping/i.test(folderPath)) return { label: /3c\s*final/i.test(folderPath) ? "Final Shipping Photos" : "Shipping Photos", rank: 0 };
+  // "NDT Photos (Segments)" / "(Cores & Covers)" when the NDT subfolder names a part; a folder named
+  // after the component itself ("NDT-1\CM2", Job 20992) is just "NDT Photos", as Adan titles it.
   const ndtPart = after(/^ndt/i);
-  if (ndtPart) return { label: `NDT Photos (${partLabel(ndtPart)})`, rank: 1 };
+  if (ndtPart && KNOWN_PART.test(ndtPart)) return { label: `NDT Photos (${partLabel(ndtPart)})`, rank: 1 };
   if (/ndt/i.test(folderPath)) return { label: "NDT Photos", rank: 1 };
   if (/hardware/i.test(folderPath)) return { label: "Incoming Photos (Hardware)", rank: 2 };
   // Loose photos straight in "3 Pictures\3A Incoming" (no subfolder).

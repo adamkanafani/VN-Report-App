@@ -43,6 +43,12 @@ export interface SectionState {
   /** For the cover section: label overrides for standard fields, keyed like JobMetadata -- e.g.
    * "EQ#" for assetNumber on Elmer Gomez's Calpine vane reports where Alfredo writes "Asset#". */
   fieldLabels?: Record<string, string>;
+  /** For the cover section: labels exactly as the author writes them, colon included or not
+   * ("Unit#", "Prior Repair:") -- learned from their last report (see seedLayout). Wins over
+   * fieldLabels; a field without one prints its standard label plus a colon. */
+  fieldLabelsExact?: Record<string, string>;
+  /** For the cover section: print the asset / EQ# under the PO number instead of on its own row. */
+  assetWithPO?: boolean;
   /** True once a human has looked at this section and accepted it, even if status was
    * "needs-attention" or "missing" — lets "Generate Report" proceed deliberately. */
   acknowledged?: boolean;
