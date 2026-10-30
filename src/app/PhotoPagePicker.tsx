@@ -140,6 +140,16 @@ export function PhotoPagePicker({
     setShownPages({ ...shownPages, [label]: pages + 1 });
     setCursor({ ...cursor, [label]: pages * PER_PAGE });
   };
+  // The ✕ on a page: the page goes, any photos on it come back out of the report (still in the
+  // strip on the left), and the pages after it move up one.
+  const deletePage = (label: string, page: number) => {
+    const slots = layout[label] ?? [];
+    const pages = pagesFor(label);
+    save({ ...layout, [label]: [...slots.slice(0, page * PER_PAGE), ...slots.slice((page + 1) * PER_PAGE)] });
+    setShownPages({ ...shownPages, [label]: pages - 1 });
+    const at = cursor[label] ?? 0;
+    setCursor({ ...cursor, [label]: at >= (page + 1) * PER_PAGE ? at - PER_PAGE : Math.min(at, page * PER_PAGE) });
+  };
   const step = (delta: number) => {
     if (!current) return;
     const i = tabPhotos.indexOf(current);
@@ -300,7 +310,19 @@ export function PhotoPagePicker({
               </div>
               {Array.from({ length: pages }, (_, page) => (
                 <div key={page} className="photo-page">
-                  <div className="photo-page-title">Page {page + 1}</div>
+                  <div className="photo-page-title">
+                    Page {page + 1}
+                    {pages > 1 && (
+                      <button
+                        type="button"
+                        className="photo-page-delete"
+                        title={slots.slice(page * PER_PAGE, (page + 1) * PER_PAGE).some(Boolean) ? "Delete this page — its photos come out of the report" : "Delete this page"}
+                        onClick={() => deletePage(label, page)}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
                   <div className="photo-page-slots">
                     {Array.from({ length: PER_PAGE }, (_, k) => {
                       const index = page * PER_PAGE + k;

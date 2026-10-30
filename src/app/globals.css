@@ -521,10 +521,23 @@ button {
 /* :not(.section-item) matters here: sidebar tabs are literal <button>s, and
    button:hover:not(:disabled) would otherwise outrank .section-item:hover (an extra
    :not() pseudo-class bumps its specificity above a plain class + :hover), silently
-   overriding the tab's own hover background with this dark navy fill. */
+   overriding the tab's own hover background with this dark navy fill.
+   color: white too -- every button that turns navy on hover gets white lettering, so a button
+   with its own navy text color can never end up navy-on-navy. A button that hovers to a light
+   background instead sets its own dark color (see .link-button / .folder-search-clear below). */
 button:hover:not(:disabled):not(.section-item) {
   background: #082c6b;
+  color: #ffffff;
   box-shadow: 0 2px 6px rgba(11, 61, 145, 0.35);
+}
+
+/* Text-style buttons ("+ Add page", "Clear", "Add it back", the search box's ✕) stay text on
+   hover -- no navy fill, a darker navy that's still readable. */
+button.link-button:hover:not(:disabled),
+button.folder-search-clear:hover:not(:disabled) {
+  background: transparent;
+  color: #082a68;
+  box-shadow: none;
 }
 
 /* A brief press-down on click -- tactile feedback that a flat hover-only button lacks. */
@@ -544,12 +557,15 @@ button.secondary {
   box-shadow: none;
 }
 
+/* Outlined buttons fill navy with white lettering on hover, like every other button. */
 button.secondary:hover:not(:disabled) {
-  background: #eaf1fb;
+  background: #0b3d91;
+  color: #ffffff;
 }
 
 button.secondary:active:not(:disabled) {
-  background: #d9e8fb;
+  background: #082c6b;
+  color: #ffffff;
 }
 
 button:disabled {
@@ -1740,7 +1756,8 @@ button.folder-source-tab:hover:not(.active):not(:disabled) {
 }
 
 .button-like:hover:not(.disabled) {
-  background: #eaf1fb;
+  background: #0b3d91;
+  color: #ffffff;
 }
 
 .button-like.disabled {
@@ -2189,4 +2206,25 @@ button.photo-slot-remove:hover:not(:disabled) {
 
 .photo-preview img[draggable="true"] {
   cursor: grab;
+}
+
+/* The ✕ that deletes a photo page (shown once a group has more than one page). */
+.photo-page-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+button.photo-page-delete {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: transparent;
+  color: #a4141a;
+  font-size: 11px;
+  box-shadow: none;
+}
+
+button.photo-page-delete:hover:not(:disabled) {
+  background: #a4141a;
+  color: #ffffff;
 }

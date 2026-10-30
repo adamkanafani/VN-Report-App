@@ -539,6 +539,9 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
     }
 
     if (section.generation === "llm-vision-select") {
+      // A photo section with nothing placed is left out entirely, divider and all -- the same as the
+      // PowerPoint. The Quick PDF is the finished report, so it never prints a "no photos" page.
+      if (photoPick(section, state.sections[id], scan.reportType).length === 0) continue;
       if (section.divider) bodyParts.push(dividerPage(section.title, logo));
       bodyParts.push(await renderPhotoPages(section, scan.jobRoot, state.sections[id], logo, scan.reportType));
       continue;
