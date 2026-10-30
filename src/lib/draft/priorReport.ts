@@ -369,7 +369,23 @@ function splitRecommendations(markup: string | undefined): { standard?: string; 
   return a.length >= b.length ? { standard: a, compact: b } : { standard: b, compact: a };
 }
 
+// A deck is read (30-80 MB off the network drive) once per version of the file: kept by path and
+// last-modified time, so an edited deck -- a tech rep fixing their I&A, say -- is read again.
+const deckReads = new Map<string, Promise<PriorDraft>>();
+
 export async function readPriorDraft(prior: PriorReport): Promise<PriorDraft> {
+  const stat = await fs.stat(toLongPath(prior.file));
+  const key = `${prior.file}|${stat.mtimeMs}|${stat.size}`;
+  let read = deckReads.get(key);
+  if (!read) {
+    read = readPriorDraftNow(prior);
+    read.catch(() => deckReads.delete(key));
+    deckReads.set(key, read);
+  }
+  return read;
+}
+
+async function readPriorDraftNow(prior: PriorReport): Promise<PriorDraft> {
   const slides = await readDeck(await fs.readFile(toLongPath(prior.file)));
   const recs = splitRecommendations(sectionMarkup(slides, /repair\s*recommendation/i));
   return {

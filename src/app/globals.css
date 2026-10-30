@@ -379,7 +379,9 @@ footer.app-header::before {
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 
-.section-item:hover:not(.active) .confidence-tag {
+/* The selected row too -- it turns navy on hover like the rest, and its white tag text needs the
+   same see-through tag background or it vanishes into the pale blue tag. */
+.section-item:hover .confidence-tag {
   background: rgba(255, 255, 255, 0.18);
 }
 

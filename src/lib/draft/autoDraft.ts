@@ -10,57 +10,46 @@ import {
   buildRepairSummaryDraft,
   recommendationsToSummary,
 } from "./narrative";
-import { findOwnReport, findPriorReport, readPriorDraft, type PriorDraft } from "./priorReport";
+import { findOwnReport, findPriorReport, readPriorDraft, type PriorDraft, type PriorReport } from "./priorReport";
 import { selectBestPhotos } from "./photoSelect";
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : "Automatic draft generation failed.";
 }
 
-// The prior-report lookup reads a 30–80 MB deck off the network drive -- done at most once per job
-// per server session, and only when a section actually needs a fresh draft.
-const priorCache = new Map<string, Promise<PriorDraft | null>>();
+// Which earlier report a job drafts from: the search walks a couple hundred job folders on the
+// network drive, so its answer is kept per job for the server session. The deck itself is read
+// through readPriorDraft, which re-reads it whenever the file changes.
+const priorLookups = new Map<string, Promise<PriorReport | null>>();
 
-export function priorDraftFor(scan: JobScanResult): Promise<PriorDraft | null> {
-  let p = priorCache.get(scan.jobRoot);
+function lookUp(scan: JobScanResult, kind: "ia" | "repair"): Promise<PriorReport | null> {
+  const key = `${kind}|${scan.jobRoot}`;
+  let p = priorLookups.get(key);
   if (!p) {
-    p = findPriorReport(scan.jobRoot, scan.metadata, "ia")
-      .then((prior) => (prior ? readPriorDraft(prior) : null))
-      .catch(() => null);
-    priorCache.set(scan.jobRoot, p);
+    p = findPriorReport(scan.jobRoot, scan.metadata, kind).catch(() => null);
+    priorLookups.set(key, p);
   }
   return p;
+}
+
+export async function priorDraftFor(scan: JobScanResult): Promise<PriorDraft | null> {
+  const prior = await lookUp(scan, "ia");
+  return prior ? readPriorDraft(prior).catch(() => null) : null;
 }
 
 // The same lookup for the Repair Report's own layout (its divider titles / optional blocks come from
 // the last same-product *Repair* Report deck, not the I&A one).
-const priorRepairCache = new Map<string, Promise<PriorDraft | null>>();
-function priorRepairDeckFor(scan: JobScanResult): Promise<PriorDraft | null> {
-  let p = priorRepairCache.get(scan.jobRoot);
-  if (!p) {
-    p = findPriorReport(scan.jobRoot, scan.metadata, "repair")
-      .then((prior) => (prior ? readPriorDraft(prior) : null))
-      .catch(() => null);
-    priorRepairCache.set(scan.jobRoot, p);
-  }
-  return p;
+async function priorRepairDeckFor(scan: JobScanResult): Promise<PriorDraft | null> {
+  const prior = await lookUp(scan, "repair");
+  return prior ? readPriorDraft(prior).catch(() => null) : null;
 }
 
-// This job's own I&A deck, read once per job per server session (see findOwnReport).
-const ownIaCache = new Map<string, Promise<PriorDraft | null>>();
-/** For a Repair Report, this job's own I&A deck (null for an I&A report, or when there isn't one). */
-export function ownIaDraftFor(scan: JobScanResult, reportType: string): Promise<PriorDraft | null> {
-  return /repair|final/i.test(reportType) ? ownIaDeckFor(scan) : Promise.resolve(null);
-}
-function ownIaDeckFor(scan: JobScanResult): Promise<PriorDraft | null> {
-  let p = ownIaCache.get(scan.jobRoot);
-  if (!p) {
-    p = findOwnReport(scan.jobRoot, scan.metadata.jobNumber, "ia")
-      .then((own) => (own ? readPriorDraft(own) : null))
-      .catch(() => null);
-    ownIaCache.set(scan.jobRoot, p);
-  }
-  return p;
+/** For a Repair Report, this job's own I&A deck (null for an I&A report, or when there isn't one) --
+ * looked for each time (one folder listing), read again whenever the tech rep edits it. */
+export async function ownIaDraftFor(scan: JobScanResult, reportType: string): Promise<PriorDraft | null> {
+  if (!/repair|final/i.test(reportType)) return null;
+  const own = await findOwnReport(scan.jobRoot, scan.metadata.jobNumber, "ia").catch(() => null);
+  return own ? readPriorDraft(own).catch(() => null) : null;
 }
 
 // Cover labels this app already has a field for (any author's wording) -- anything else on the last
