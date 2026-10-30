@@ -27,7 +27,7 @@ const DRIVES_ROOT = "__DRIVES__";
 /** Enumerates mounted filesystem drives (local disks + mapped network drives), matching what
  * Windows Explorer's "This PC" shows. There's no cross-platform Node API for this, but the app
  * only ever runs on the tech reps' own Windows machines, so shelling out to PowerShell is fine. */
-async function listDrives(): Promise<string[]> {
+async function listDrivesFromPowerShell(): Promise<string[]> {
   try {
     const { stdout } = await execAsync('powershell -NoProfile -Command "(Get-PSDrive -PSProvider FileSystem).Root"');
     return stdout
@@ -38,6 +38,52 @@ async function listDrives(): Promise<string[]> {
   } catch {
     return []; // PowerShell unavailable for some reason -- picker just shows an empty drives list
   }
+}
+
+// Starting PowerShell took 1-3 s every time "This PC" was clicked. Instead: every drive letter is
+// checked directly (all at once, each capped at 1.5 s so a dropped network drive can't stall it),
+// and the list is kept and handed back instantly on later clicks while it refreshes in the
+// background -- drives get mapped or unplugged rarely, and the next click picks that up.
+const DRIVE_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+let driveCache: { at: number; drives: string[] } | null = null;
+let driveRefresh: Promise<string[]> | null = null;
+
+async function probeDrives(): Promise<string[]> {
+  const found = await Promise.all(
+    DRIVE_LETTERS.map((letter) =>
+      withTimeout(
+        fs.stat(`${letter}:\\`).then(
+          () => `${letter}:\\`,
+          () => null
+        ),
+        1500,
+        null
+      )
+    )
+  );
+  const drives = found.filter((d): d is string => d !== null);
+  // Nothing answered (unusual -- C: always should): fall back to asking PowerShell.
+  return drives.length > 0 ? drives : listDrivesFromPowerShell();
+}
+
+function refreshDrives(): Promise<string[]> {
+  driveRefresh ??= probeDrives()
+    .then((drives) => {
+      driveCache = { at: Date.now(), drives };
+      return drives;
+    })
+    .finally(() => {
+      driveRefresh = null;
+    });
+  return driveRefresh;
+}
+
+async function listDrives(): Promise<string[]> {
+  if (driveCache) {
+    if (Date.now() - driveCache.at > 5_000) refreshDrives().catch(() => {});
+    return driveCache.drives;
+  }
+  return refreshDrives();
 }
 
 /** Runs `fn` over `items` with at most `limit` calls in flight at once, instead of firing all of
