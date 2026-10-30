@@ -33,11 +33,13 @@ async function logoDataUri(): Promise<string> {
 
 /** The letterhead every non-cover page opens with in APG's usual report format: a small logo top
  * left, the page's title centered next to it, and the blue-to-gray bar underneath. */
-function pageHeader(title: string, logo: string): string {
+/** The page header from the tech reps' own decks: logo top left, bold black title centered beside
+ * it -- 24pt on photo pages, 20pt elsewhere (Job 20992) -- over the blue and gray bars. */
+function pageHeader(title: string, logo: string, titleSize = 20): string {
   return `
     <div class="letterhead">
       <img class="logo" src="${logo}" alt="APG" />
-      <h1 class="page-title">${escapeHtml(title)}</h1>
+      <h1 class="page-title" style="font-size: ${titleSize}pt">${escapeHtml(title)}</h1>
     </div>
     <div class="letterhead-bar"></div>`;
 }
@@ -46,7 +48,10 @@ function pageHeader(title: string, logo: string): string {
  * forms (Serial Number List, Incoming Dimensional Sheets, NDT Reports, ...) with one, since the
  * forms themselves carry no report-level heading. */
 function dividerPage(title: string, logo: string): string {
-  return `<section class="report-page divider-page">${pageHeader("", logo)}<div class="divider-title">${escapeHtml(title)}</div></section>`;
+  // "Incoming Dimensional Sheets" over two lines like the decks ("Incoming" / "Dimensional Sheets").
+  const m = title.match(/^(Incoming|Final)\s+(.{12,})$/);
+  const text = m ? `${escapeHtml(m[1])}<br />${escapeHtml(m[2])}` : escapeHtml(title);
+  return `<section class="report-page divider-page"><img class="logo" src="${logo}" alt="APG" /><div class="divider-title">${text}</div></section>`;
 }
 
 /** data-col carries the raw column name onto each cell so specific columns (e.g. "APG #") can
@@ -190,7 +195,7 @@ async function renderPhotoPages(section: SectionScanResult, jobRoot: string, sec
           }
         })
       );
-      pages.push(`<section class="report-page">${pageHeader(label, logo)}<div class="photo-page-grid">${images.join("")}</div></section>`);
+      pages.push(`<section class="report-page">${pageHeader(label, logo, 24)}<div class="photo-page-grid">${images.join("")}</div></section>`);
     }
   }
   return pages.join("\n");
@@ -213,7 +218,8 @@ export interface RenderedReport {
 }
 
 const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
-  body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #1a1a1a; }
+  /* margin: 0 -- the page's own 0.5in margin is the whole margin, so pt positions below match his pages. */
+  body { margin: 0; font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #1a1a1a; }
   p { line-height: 1.5; margin: 0 0 10px; }
   /* Underlined subheading (e.g. "Tips:", "Squealer Tip Thickness (E):") — APG's usual way of
      breaking a summary into named categories instead of one flowing paragraph. Extra top margin
@@ -256,18 +262,27 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
      renderReportSegments) -- no borders or padding of its own. */
   table.page-frame { margin: 0; border-collapse: collapse; }
   table.page-frame > thead > tr > td, table.page-frame > tbody > tr > td { border: none; padding: 0; font-size: inherit; }
+  /* Body text 7.2pt in from the left edge, as on his summary pages. */
+  table.page-frame > tbody > tr > td { padding: 0 7.2pt; }
   /* Divider page ahead of a block of appended exhibits (see dividerPage) -- the section title large
      and centered on an otherwise empty page, like the divider slides in APG's own V&N decks. */
-  .divider-page { min-height: 900px; }
-  .divider-title { text-align: center; font-size: 40px; font-weight: 700; color: ${apgBlue}; padding-top: 340px; }
+  /* Measured off Adan Aguirre's own 20992 I&A PDF. Its pages are 540 x 720 pt -- exactly this
+     report's content area (Letter inside 0.5in margins) -- so everything below is in pt at his
+     positions: what prints lands where it does on his pages. */
 
-  /* Letterhead used at the top of every page after the cover, matching APG's standard report
-     header: small logo, centered bold title, blue-to-gray bar underneath. The logo is absolutely
-     positioned so the title centers over the full page width, not the space left after the logo. */
-  .letterhead { position: relative; min-height: 40px; }
-  .letterhead .logo { position: absolute; left: 0; top: 0; height: 40px; }
-  .letterhead .page-title { text-align: center; font-size: 24px; font-weight: 700; color: #1a1a1a; margin: 0; padding-top: 6px; }
-  .letterhead-bar { height: 4px; margin: 6px 0 20px; background: linear-gradient(to right, ${apgBlue} 0 12%, ${apgBarGray} 12% 100%); }
+  /* Divider: just the logo top left and the block's title, black 40pt bold, centered 256pt down. */
+  .divider-page { position: relative; height: 700pt; }
+  .divider-page .logo { position: absolute; left: 0; top: 0; width: 79pt; height: 44pt; object-fit: contain; object-position: left top; }
+  .divider-title { position: absolute; top: 256pt; left: 0; right: 0; text-align: center; font-size: 40pt; line-height: 48pt; font-weight: 700; color: #000000; }
+
+  /* Page header: 79 x 44pt logo top left, the title centered over the full width in that 44pt band,
+     then his two 7pt bars -- blue (#0046A2) over gray (#7F7F7F), the gray offset down and right. */
+  .letterhead { position: relative; height: 44pt; }
+  .letterhead .logo { position: absolute; left: 0; top: 0; width: 79pt; height: 44pt; object-fit: contain; object-position: left top; }
+  .letterhead .page-title { margin: 0; text-align: center; font-weight: 700; color: #000000; line-height: 44pt; white-space: nowrap; }
+  .letterhead-bar { position: relative; height: 10.75pt; margin: 0 0 3pt; }
+  .letterhead-bar::before { content: ""; position: absolute; left: 35pt; top: 3.75pt; width: 504pt; height: 7pt; background: #7f7f7f; }
+  .letterhead-bar::after { content: ""; position: absolute; left: 26.75pt; top: 0; width: 511.25pt; height: 7pt; background: #0046a2; }
 
   /* Cover page -- field rows sized to match APG's own original reports (see the narrative-section
      comment above for how these sizes were confirmed). page-break-inside: auto overrides the
@@ -275,12 +290,13 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
      (see SectionState.customFields) can genuinely run past one page, and without this override
      the extra rows were getting clipped off the bottom instead of flowing onto a second page, the
      same "let it flow across pages" fix already applied to table-section/repairs-section above. */
-  .cover { text-align: center; padding-top: 60px; page-break-inside: auto; }
-  .cover-logo { width: 340px; margin-bottom: 24px; }
-  /* Bumped again (30px/19px -> 38px/24px) -- still noticeably smaller than APG's own real report
-     per a direct tech rep comparison (see the two reference screenshots this size was matched
-     against). cover-label widened, and cover-row given more vertical breathing room, to match. */
-  .cover h1 { font-size: 38px; margin: 0 0 40px; }
+  /* Cover, at his positions (20992's page 1): the logo 308 x 170pt centered 10pt down, the report
+     title 24pt bold black under it, then the rows -- labels gray (#7F7F7F) at 7.2pt from the left,
+     values black at 223.2pt, Arial bold, one blank line between rows. The rows' font size is set
+     per page (coverFontSize) so a long details page still fits on one page, as his does. */
+  .cover { text-align: center; padding-top: 9.9pt; page-break-inside: auto; }
+  .cover-logo { display: block; width: 308pt; height: 170pt; margin: 0 auto; object-fit: contain; }
+  .cover h1 { font-size: 24pt; line-height: 27.6pt; font-weight: 700; color: #000000; margin: 3.7pt 0 37.2pt; }
   /* display: block (with width: fit-content + margin: auto standing in for what inline-block used
      to give for free -- shrink-to-content, centered by the parent) instead of inline-block. An
      inline-block is one atomic box for pagination purposes: when it can't fit entirely on the
@@ -288,18 +304,15 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
      page 1 with just the logo and title and nothing else. A block-level box doesn't have that
      restriction, so its .cover-row children (each already page-break-inside: avoid) can split
      across the page boundary wherever they actually run out of room. */
-  .cover-fields { display: block; width: fit-content; margin: 0 auto; text-align: left; }
-  /* Padding (row-to-row) and gap (label-to-value) both widened per tech rep feedback -- more
-     breathing room between each line on the cover page. */
-  .cover-row { display: flex; gap: 32px; padding: 18px 0; font-size: 24px; page-break-inside: avoid; }
-  .cover-label { width: 250px; flex-shrink: 0; color: #6a6a6a; font-weight: 700; }
+  .cover-fields { display: block; text-align: left; padding-left: 7.2pt; font-family: Arial, Helvetica, sans-serif; }
+  .cover-row { display: flex; line-height: 1.2; margin-bottom: 1.2em; page-break-inside: avoid; }
+  .cover-label { width: 216pt; flex-shrink: 0; color: #7f7f7f; font-weight: 700; }
   /* pre-line: multi-line values (serial numbers three to a line) break where the tech rep broke them. */
-  .cover-value { font-weight: 700; color: #1a1a1a; white-space: pre-line; }
-  /* The cover's second page (see renderReportSegments -- everything after "Tech Rep" always
-     starts a fresh page, per tech rep feedback) reuses .cover for identical centering/typography
-     but skips the top padding and doesn't repeat the logo/title. */
+  .cover-value { font-weight: 700; color: #000000; white-space: pre-line; }
+  /* The cover's second page (everything after "Tech Rep" starts a fresh page): his page header,
+     then the rows from just under the bars. */
   .cover-continued { padding-top: 0; text-align: left; }
-  .cover-continued .cover-fields { margin-top: 30px; }
+  .cover-continued .cover-fields { margin-top: 0; }
 
   table { border-collapse: collapse; width: 100%; margin-top: 8px; }
   th, td { border: 1px solid #ccc; padding: 3px 6px; font-size: 9px; }
@@ -327,7 +340,8 @@ const REPORT_STYLES = (apgBlue: string, apgBarGray: string) => `
   .photo-grid { display: flex; flex-wrap: wrap; gap: 8px; }
   /* Every photo fills its slot edge to edge (portrait shots cropped to the slot, not shrunk to a
      narrow strip), the way the tech reps' own photo pages look -- Job 20992's NDT pages. */
-  .photo-page-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: repeat(3, 284px); gap: 12px; }
+  /* His photo pages: photos 246 x 206pt, 18pt in from the left, 13pt apart across, 12pt down. */
+  .photo-page-grid { display: grid; grid-template-columns: 246pt 246pt; grid-template-rows: repeat(3, 206pt); column-gap: 13pt; row-gap: 12pt; margin: 9pt 0 0 18pt; }
   .photo-page-grid figure { margin: 0; overflow: hidden; }
   .photo-page-grid img { display: block; width: 100%; height: 100%; object-fit: cover; }
   .photo-grid figure { width: 30%; margin: 0; }
@@ -369,6 +383,19 @@ export function sectionText(scan: Pick<JobScanResult, "variant">, state: JobStat
 function coverDate(raw: string): string {
   const m = raw.split("T")[0].match(/^(\d{4})-(\d{2})-(\d{2})$/);
   return m ? `${Number(m[2])}/${Number(m[3])}/${m[1]}` : raw.split("T")[0];
+}
+
+/** The cover rows' font size: his 24pt, stepped down (to no less than 14pt) until every row --
+ * wrapped values and the blank line between rows included -- fits the space left on the page. His
+ * 20992 details page, with ten serial numbers, came out at 20.5pt the same way. Value column is
+ * 316.8pt wide (223.2pt in from the left of a 540pt page); bold Arial averages ~0.58em per char. */
+function coverFontSize(fields: Array<{ label: string; value: string }>, available: number): number {
+  for (let size = 24; size > 14; size -= 0.5) {
+    const perLine = Math.max(8, Math.floor(316.8 / (size * 0.58)));
+    const lines = fields.reduce((n, f) => n + f.value.split("\n").reduce((m, l) => m + Math.max(1, Math.ceil(l.length / perLine)), 0), 0);
+    if ((lines + fields.length - 1) * size * 1.2 <= available) return size;
+  }
+  return 14;
 }
 
 export function coverPages(
@@ -502,17 +529,19 @@ export async function renderReportSegments(scanIn: JobScanResult, state: JobStat
   const { page1, page2 } = coverPages(scan, state);
   const coverRowsHtml = (fields: Array<{ label: string; value: string }>) =>
     fields.map(({ label, value }) => `<div class="cover-row"><span class="cover-label">${escapeHtml(label)}:</span><span class="cover-value">${escapeHtml(value)}</span></div>`).join("");
+  // His cover rows start 249pt down on page 1 and 57.5pt down on the details page (right under the
+  // header), in the 720pt-tall page.
   bodyParts.push(`
     <section class="cover">
       <img class="cover-logo" src="${logo}" alt="APG" />
       <h1>${escapeHtml(scan.reportType)}</h1>
-      <div class="cover-fields">${coverRowsHtml(page1)}</div>
+      <div class="cover-fields" style="font-size: ${coverFontSize(page1, 720 - 249)}pt">${coverRowsHtml(page1)}</div>
     </section>`);
   if (page2.length > 0) {
     bodyParts.push(`
       <section class="cover cover-continued report-page">
         ${pageHeader(scan.reportType, logo)}
-        <div class="cover-fields">${coverRowsHtml(page2)}</div>
+        <div class="cover-fields" style="font-size: ${coverFontSize(page2, 720 - 57.5)}pt">${coverRowsHtml(page2)}</div>
       </section>`);
   }
 
